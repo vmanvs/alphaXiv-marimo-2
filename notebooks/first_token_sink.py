@@ -6,6 +6,7 @@
 #     "matplotlib>=3.8",
 #     "numpy>=1.26",
 #     "pandas>=2.2",
+#     "plotly>=5.22",
 #     "torch>=2.3",
 #     "transformers>=4.44",
 # ]
@@ -148,11 +149,186 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md(r"""
     **Reader's note.** For the best experience, run all cells once, turn **show code** off, and read vertically from top to bottom. The first sections are safe on small local models. The model-family sweeps and long-context experiments are intentionally gated behind buttons and are meant for molab with the attached RTX Pro 6000.
     """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## The strange thing we are trying to explain
+
+    Open an attention map from a modern causal language model and you often see
+    a vertical stripe at position zero. Many heads send probability mass to the
+    first token even when that token has no obvious semantic role in the answer.
+
+    The paper's claim is sharper than "attention is noisy": the first token can
+    become a safe routing target. When a head does not need to mix in new
+    information, it can attend to a low-information position and behave closer
+    to an approximate no-op. That turns a visual oddity into infrastructure for
+    depth, long context, and streaming inference.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    sink_playground = r"""
+    <div id="sink-playground" class="sink-playground">
+      <style>
+        #sink-playground {
+          border: 1px solid #d7dde8;
+          border-radius: 8px;
+          background: #fbfdff;
+          padding: 16px;
+          margin: 6px 0 24px;
+          color: #172033;
+        }
+        #sink-playground * { box-sizing: border-box; }
+        #sink-playground .sink-playground-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 0.9fr) minmax(280px, 1.1fr);
+          gap: 18px;
+          align-items: start;
+        }
+        #sink-playground h3 {
+          margin: 0 0 10px;
+          font-size: 1.05rem;
+          line-height: 1.25;
+        }
+        #sink-playground label {
+          display: grid;
+          gap: 5px;
+          margin: 12px 0;
+          font-weight: 700;
+          color: #334155;
+        }
+        #sink-playground input[type="range"] { width: 100%; }
+        #sink-playground .sink-track {
+          position: relative;
+          height: 34px;
+          border-radius: 6px;
+          background: #eef2f7;
+          overflow: hidden;
+          margin: 10px 0;
+          border: 1px solid #dce3ee;
+        }
+        #sink-playground .sink-fill {
+          height: 100%;
+          width: 0%;
+          display: flex;
+          align-items: center;
+          padding-left: 10px;
+          color: #fff;
+          font-weight: 850;
+          font-size: 0.84rem;
+          white-space: nowrap;
+          transition: width 180ms ease;
+        }
+        #sink-playground .sink-zero { background: #111827; }
+        #sink-playground .sink-recent { background: #2563eb; }
+        #sink-playground .sink-semantic { background: #16a34a; }
+        #sink-playground .sink-meter {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 12px;
+        }
+        #sink-playground .sink-metric {
+          border: 1px solid #d7dde8;
+          border-radius: 8px;
+          background: #fff;
+          padding: 10px;
+        }
+        #sink-playground .sink-metric span {
+          display: block;
+          color: #64748b;
+          font-size: 0.74rem;
+          font-weight: 850;
+          text-transform: uppercase;
+          letter-spacing: 0;
+        }
+        #sink-playground .sink-metric strong {
+          display: block;
+          margin-top: 4px;
+          font-size: 1.25rem;
+          color: #111827;
+        }
+        @media (max-width: 760px) {
+          #sink-playground .sink-playground-grid { grid-template-columns: 1fr; }
+          #sink-playground .sink-meter { grid-template-columns: 1fr; }
+        }
+      </style>
+      <div class="sink-playground-grid">
+        <section>
+          <h3>Attention sink intuition</h3>
+          <p style="margin:0;color:#475569;line-height:1.5;">
+            Move the controls before running any model. The point is not to
+            simulate a Transformer exactly; it is to make the mechanism visible.
+            More no-op pressure and longer context make token 0 more attractive.
+          </p>
+          <label>No-op pressure <input data-role="noop" type="range" min="0" max="100" value="58"></label>
+          <label>Semantic pressure <input data-role="semantic" type="range" min="0" max="100" value="42"></label>
+          <label>Context length <input data-role="context" type="range" min="32" max="2048" step="32" value="512"></label>
+        </section>
+        <section>
+          <div class="sink-track"><div class="sink-fill sink-zero" data-role="zero">token 0</div></div>
+          <div class="sink-track"><div class="sink-fill sink-recent" data-role="recent">recent tokens</div></div>
+          <div class="sink-track"><div class="sink-fill sink-semantic" data-role="semantic-bar">semantic tokens</div></div>
+          <div class="sink-meter">
+            <div class="sink-metric"><span>Sink mass</span><strong data-role="sink-mass">0%</strong></div>
+            <div class="sink-metric"><span>Context</span><strong data-role="context-value">512</strong></div>
+            <div class="sink-metric"><span>Interpretation</span><strong data-role="verdict">mixed</strong></div>
+          </div>
+        </section>
+      </div>
+      <script>
+        (() => {
+          const root = document.currentScript.closest("#sink-playground");
+          const noop = root.querySelector("[data-role='noop']");
+          const semantic = root.querySelector("[data-role='semantic']");
+          const context = root.querySelector("[data-role='context']");
+          const zero = root.querySelector("[data-role='zero']");
+          const recent = root.querySelector("[data-role='recent']");
+          const semanticBar = root.querySelector("[data-role='semantic-bar']");
+          const sinkMass = root.querySelector("[data-role='sink-mass']");
+          const contextValue = root.querySelector("[data-role='context-value']");
+          const verdict = root.querySelector("[data-role='verdict']");
+
+          function render() {
+            const noopValue = Number(noop.value) / 100;
+            const semanticValue = Number(semantic.value) / 100;
+            const contextValueRaw = Number(context.value);
+            const contextPressure = Math.log2(contextValueRaw / 32) / Math.log2(2048 / 32);
+            const sink = Math.max(0.04, Math.min(0.88, 0.12 + 0.52 * noopValue + 0.28 * contextPressure - 0.34 * semanticValue));
+            const semanticMass = Math.max(0.06, Math.min(0.78, 0.18 + 0.58 * semanticValue - 0.18 * noopValue));
+            const recentMass = Math.max(0.05, 1 - sink - semanticMass);
+            const total = sink + semanticMass + recentMass;
+            const sinkPct = Math.round((sink / total) * 100);
+            const recentPct = Math.round((recentMass / total) * 100);
+            const semanticPct = Math.round((semanticMass / total) * 100);
+            zero.style.width = `${sinkPct}%`;
+            recent.style.width = `${recentPct}%`;
+            semanticBar.style.width = `${semanticPct}%`;
+            zero.textContent = `token 0 ${sinkPct}%`;
+            recent.textContent = `recent tokens ${recentPct}%`;
+            semanticBar.textContent = `semantic tokens ${semanticPct}%`;
+            sinkMass.textContent = `${sinkPct}%`;
+            contextValue.textContent = contextValueRaw.toLocaleString();
+            verdict.textContent = sinkPct > 45 ? "sink-heavy" : sinkPct > 24 ? "mixed" : "semantic";
+          }
+
+          [noop, semantic, context].forEach((input) => input.addEventListener("input", render));
+          render();
+        })();
+      </script>
+    </div>
+    """
+    mo.Html(sink_playground)
     return
 
 
@@ -162,15 +338,18 @@ def _():
     np = None
     pd = None
     plt = None
+    go = None
     torch = None
     AutoModelForCausalLM = None
     AutoTokenizer = None
+    from types import SimpleNamespace
 
     try:
         import gc
         import numpy as np
         import pandas as pd
         import matplotlib.pyplot as plt
+        import plotly.graph_objects as go
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
     except Exception as exc:  # noqa: BLE001 - show import failures inside notebook.
@@ -178,8 +357,10 @@ def _():
     return (
         AutoModelForCausalLM,
         AutoTokenizer,
+        SimpleNamespace,
         dependency_error,
         gc,
+        go,
         np,
         pd,
         plt,
@@ -292,7 +473,7 @@ def _():
     )
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(ALPHAXIV_URL, PAPER_URL, mo):
     mo.md(f"""
     ## What the paper gives us
@@ -405,6 +586,102 @@ def _(PROMPT_PRESETS, custom_prompt, prompt_preset):
     selected_preset_name = prompt_preset.value or "Paper-style greeting"
     selected_prompt = custom_prompt.value.strip() or PROMPT_PRESETS[selected_preset_name]
     return selected_preset_name, selected_prompt
+
+
+@app.cell(hide_code=True)
+def _(
+    MODEL_OPTIONS,
+    PRECISION_OPTIONS,
+    SimpleNamespace,
+    anchor_mode,
+    execution_mode,
+    max_tokens,
+    model_choice,
+    precision_choice,
+    selected_preset_name,
+    selected_prompt,
+    sink_threshold,
+):
+    current_probe_config = SimpleNamespace(
+        execution_mode=execution_mode.value,
+        model_label=model_choice.value,
+        model_id=MODEL_OPTIONS[model_choice.value],
+        precision_label=precision_choice.value,
+        precision_key=PRECISION_OPTIONS[precision_choice.value],
+        prompt_preset=selected_preset_name,
+        prompt=selected_prompt,
+        anchor_mode=anchor_mode.value,
+        max_tokens=int(max_tokens.value),
+        sink_threshold=float(sink_threshold.value),
+    )
+    return (current_probe_config,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    get_selected_probe_config, set_selected_probe_config = mo.state(None)
+    return get_selected_probe_config, set_selected_probe_config
+
+
+@app.cell(hide_code=True)
+def _(get_selected_probe_config):
+    probe_config = get_selected_probe_config()
+    return (probe_config,)
+
+
+@app.cell(hide_code=True)
+def _(current_probe_config, mo, set_selected_probe_config):
+    select_probe_config = mo.ui.button(
+        label="Select probe configuration",
+        kind="success",
+        on_click=lambda _: set_selected_probe_config(current_probe_config),
+    )
+    mo.vstack(
+        [
+            mo.md(
+                """
+                Commit the setup before running it. This keeps the notebook from
+                downloading a model every time a dropdown changes.
+                """
+            ).callout(kind="info"),
+            select_probe_config,
+        ],
+        gap=0.6,
+    )
+    return (select_probe_config,)
+
+
+@app.cell(hide_code=True)
+def _(mo, probe_config):
+    run_probe_button = mo.ui.run_button(
+        label="Load model and run attention probe",
+        kind="success",
+        full_width=True,
+    )
+    if probe_config is None:
+        probe_action_view = mo.md(
+            "Select a probe configuration above. No model will load until a configuration is selected and the run button is clicked."
+        ).callout(kind="info")
+    else:
+        probe_action_view = mo.vstack(
+            [
+                mo.md(
+                    f"""
+                    Selected probe:
+
+                    - model: `{probe_config.model_id}`
+                    - dtype policy: `{probe_config.precision_label}`
+                    - prompt preset: `{probe_config.prompt_preset}`
+                    - max inspected tokens: `{probe_config.max_tokens}`
+                    - anchor mode: `{probe_config.anchor_mode}`
+                    """
+                ).callout(kind="info"),
+                run_probe_button,
+            ],
+            gap=0.6,
+        )
+    probe_action_view
+    return (run_probe_button,)
 
 
 @app.cell(hide_code=True)
@@ -524,18 +801,41 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
 
 
 @app.cell(hide_code=True)
-def _(MODEL_OPTIONS, PRECISION_OPTIONS, load_model_bundle, model_choice, precision_choice):
-    selected_model_id = MODEL_OPTIONS[model_choice.value]
-    selected_precision_key = PRECISION_OPTIONS[precision_choice.value]
-    tokenizer, model, device, model_dtype, model_error = load_model_bundle(
-        selected_model_id,
-        selected_precision_key,
+def _(
+    MODEL_OPTIONS,
+    PRECISION_OPTIONS,
+    load_model_bundle,
+    model_choice,
+    precision_choice,
+    probe_config,
+    run_probe_button,
+):
+    selected_model_id = (
+        probe_config.model_id if probe_config is not None else MODEL_OPTIONS[model_choice.value]
     )
+    selected_precision_key = (
+        probe_config.precision_key
+        if probe_config is not None
+        else PRECISION_OPTIONS[precision_choice.value]
+    )
+    probe_run_requested = bool(probe_config is not None and run_probe_button.value)
+    if probe_run_requested:
+        tokenizer, model, device, model_dtype, model_error = load_model_bundle(
+            selected_model_id,
+            selected_precision_key,
+        )
+    else:
+        tokenizer = None
+        model = None
+        device = None
+        model_dtype = None
+        model_error = None
     return (
         device,
         model,
         model_dtype,
         model_error,
+        probe_run_requested,
         selected_model_id,
         selected_precision_key,
         tokenizer,
@@ -543,8 +843,23 @@ def _(MODEL_OPTIONS, PRECISION_OPTIONS, load_model_bundle, model_choice, precisi
 
 
 @app.cell(hide_code=True)
-def _(device, mo, model_dtype, model_error, selected_model_id, torch):
-    if model_error is not None:
+def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_requested, selected_model_id, torch):
+    if probe_config is None:
+        mo.md(
+            """
+            Model status: waiting for a selected probe configuration.
+            """
+        ).callout(kind="info")
+    elif not probe_run_requested:
+        mo.md(
+            f"""
+            Model status: ready to run `{selected_model_id}`.
+
+            Click **Load model and run attention probe** when you want this cell
+            to download/load weights and compute attentions.
+            """
+        ).callout(kind="info")
+    elif model_error is not None:
         mo.md(
             f"""
             Model could not be loaded.
@@ -554,6 +869,8 @@ def _(device, mo, model_dtype, model_error, selected_model_id, torch):
             ```
             """
         ).callout(kind="warn")
+    elif model is None:
+        mo.md("Model status: waiting for the run button.").callout(kind="info")
     else:
         cuda_line = ""
         if torch.cuda.is_available():
@@ -622,28 +939,48 @@ def _(mo, model):
 
 
 @app.cell(hide_code=True)
-def _(anchor_mode, anchored_prompt, selected_prompt, tokenizer):
-    analysis_prompt, anchor_note = anchored_prompt(
-        selected_prompt,
-        anchor_mode.value,
-        tokenizer,
-    )
+def _(anchored_prompt, probe_config, tokenizer):
+    if probe_config is None:
+        analysis_prompt = None
+        anchor_note = "Select a probe configuration to build the prompt."
+    elif (
+        tokenizer is None
+        and probe_config.anchor_mode == "Use model special token at first position"
+    ):
+        analysis_prompt = probe_config.prompt
+        anchor_note = "The model special token will be prepended after the tokenizer loads."
+    else:
+        analysis_prompt, anchor_note = anchored_prompt(
+            probe_config.prompt,
+            probe_config.anchor_mode,
+            tokenizer,
+        )
     return analysis_prompt, anchor_note
 
 
 @app.cell(hide_code=True)
-def _(analysis_prompt, anchor_note, mo, selected_preset_name):
-    mo.md(f"""
-    ## 3. Current prompt
+def _(analysis_prompt, anchor_note, mo, probe_config):
+    if probe_config is None:
+        prompt_view = mo.md(
+            """
+            ## 3. Current prompt
 
-    Preset: `{selected_preset_name}`
+            Waiting for a selected probe configuration.
+            """
+        ).callout(kind="info")
+    else:
+        prompt_view = mo.md(f"""
+        ## 3. Current prompt
 
-    Anchor: {anchor_note}
+        Preset: `{probe_config.prompt_preset}`
 
-    ```text
-    {analysis_prompt}
-    ```
-    """)
+        Anchor: {anchor_note}
+
+        ```text
+        {analysis_prompt}
+        ```
+        """)
+    prompt_view
     return
 
 
@@ -777,14 +1114,18 @@ def _():
 def _(
     analysis_prompt,
     device,
-    max_tokens,
     model,
     model_error,
+    probe_config,
+    probe_run_requested,
     run_attention_probe,
     tokenizer,
     torch,
 ):
-    if model_error is not None or model is None:
+    if not probe_run_requested:
+        probe_error = None
+        probe = None
+    elif model_error is not None or model is None or analysis_prompt is None:
         probe_error = model_error
         probe = None
     else:
@@ -795,7 +1136,7 @@ def _(
                 tokenizer,
                 device,
                 torch,
-                max_tokens.value,
+                probe_config.max_tokens,
             )
             probe_error = None
         except Exception as exc:  # noqa: BLE001 - show probe failures in UI.
@@ -805,7 +1146,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(mo, probe, probe_error):
+def _(mo, probe, probe_error, probe_run_requested):
     if probe_error is not None:
         mo.md(
             f"""
@@ -816,12 +1157,16 @@ def _(mo, probe, probe_error):
             ```
             """
         ).callout(kind="warn")
-    else:
+    elif probe is not None:
         mo.md(
             f"""
             Probe complete: `{len(probe["tokens"])}` tokens inspected.
             """
         ).callout(kind="success")
+    elif probe_run_requested:
+        mo.md("Probe is waiting for the model load to finish.").callout(kind="info")
+    else:
+        mo.md("Probe output is waiting for the run button.").callout(kind="info")
     return
 
 
@@ -897,62 +1242,259 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(np, plt):
+def _(go, np):
+    def _sampled_token_ticks(tokens, max_ticks=28):
+        if not tokens:
+            return [], []
+        step = max(1, int(np.ceil(len(tokens) / max_ticks)))
+        positions = list(range(0, len(tokens), step))
+        labels = [f"{position}: {tokens[position][:14]}" for position in positions]
+        return positions, labels
+
     def plot_attention_matrix(matrix, tokens, layer, head):
-        size = max(6, min(12, 0.45 * len(tokens)))
-        fig, ax = plt.subplots(figsize=(size, size))
-        image = ax.imshow(matrix, cmap="magma", vmin=0.0, vmax=max(0.05, float(np.max(matrix))))
-        ax.set_title(f"Attention weights: layer {layer}, head {head}")
-        ax.set_xlabel("Key token attended to")
-        ax.set_ylabel("Query token receiving context")
-        ax.set_xticks(range(len(tokens)))
-        ax.set_yticks(range(len(tokens)))
-        labels = [f"{index}:{token}" for index, token in enumerate(tokens)]
-        ax.set_xticklabels(labels, rotation=90, fontsize=8)
-        ax.set_yticklabels(labels, fontsize=8)
-        fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-        fig.tight_layout()
+        data = np.asarray(matrix)
+        token_count = len(tokens)
+        tick_positions, tick_labels = _sampled_token_ticks(tokens)
+        hover = [
+            [
+                (
+                    f"query {row}: {tokens[row]}<br>"
+                    f"key {col}: {tokens[col]}"
+                )
+                for col in range(token_count)
+            ]
+            for row in range(token_count)
+        ]
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=data,
+                x=list(range(token_count)),
+                y=list(range(token_count)),
+                customdata=hover,
+                colorscale="Magma",
+                zmin=0.0,
+                zmax=max(0.05, float(np.nanmax(data))),
+                colorbar={"title": "attention", "thickness": 12},
+                hovertemplate="%{customdata}<br>attention=%{z:.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title=f"Attention weights: layer {layer}, head {head}",
+            height=max(420, min(760, 20 * token_count)),
+            margin={"l": 56, "r": 16, "t": 54, "b": 72},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={
+                "title": "Key token attended to",
+                "tickmode": "array",
+                "tickvals": tick_positions,
+                "ticktext": tick_labels,
+                "tickangle": -45,
+            },
+            yaxis={
+                "title": "Query token receiving context",
+                "tickmode": "array",
+                "tickvals": tick_positions,
+                "ticktext": tick_labels,
+                "autorange": "reversed",
+            },
+        )
+        return fig
+
+    def plot_attention_flow(probe, layer, head, query_index, top_k=12):
+        attention_row = probe["attention"][layer, head, query_index].numpy()
+        visible_keys = np.arange(query_index + 1)
+        top_count = min(int(top_k), len(visible_keys))
+        top_positions = visible_keys[np.argsort(attention_row[: query_index + 1])[-top_count:]]
+        top_positions = top_positions[np.argsort(attention_row[top_positions])]
+        labels = [f"{position}: {probe['tokens'][position][:22]}" for position in top_positions]
+        values = attention_row[top_positions]
+        colors = ["#111827" if int(position) == 0 else "#2563eb" for position in top_positions]
+        fig = go.Figure(
+            data=go.Bar(
+                x=values,
+                y=labels,
+                orientation="h",
+                marker={"color": colors},
+                customdata=[
+                    f"key {int(position)}: {probe['tokens'][int(position)]}"
+                    for position in top_positions
+                ],
+                hovertemplate="%{customdata}<br>attention=%{x:.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title=f"Where query token {query_index} sends attention",
+            height=max(330, 32 * top_count),
+            margin={"l": 126, "r": 16, "t": 52, "b": 48},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={"title": "Attention weight", "range": [0, max(0.05, float(values.max()) * 1.12)]},
+            yaxis={"title": ""},
+            showlegend=False,
+        )
         return fig
 
     def plot_sink_map(sink_scores, threshold):
         data = sink_scores.numpy()
-        fig, ax = plt.subplots(figsize=(10, max(3, data.shape[0] * 0.35)))
-        image = ax.imshow(data, cmap="viridis", aspect="auto", vmin=0.0, vmax=max(0.75, float(data.max())))
-        ax.contour(data > threshold, levels=[0.5], colors="white", linewidths=0.8)
-        ax.set_title("Mean attention to token 0 by layer and head")
-        ax.set_xlabel("Head")
-        ax.set_ylabel("Layer")
-        ax.set_xticks(range(data.shape[1]))
-        ax.set_yticks(range(data.shape[0]))
-        fig.colorbar(image, ax=ax, label="Mean attention to token 0")
-        fig.tight_layout()
+        layer_count, head_count = data.shape
+        hover = [
+            [
+                f"layer {layer}<br>head {head}<br>strong sink: {data[layer, head] > threshold}"
+                for head in range(head_count)
+            ]
+            for layer in range(layer_count)
+        ]
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=data,
+                x=list(range(head_count)),
+                y=list(range(layer_count)),
+                customdata=hover,
+                colorscale="Viridis",
+                zmin=0.0,
+                zmax=max(0.75, float(np.nanmax(data))),
+                colorbar={"title": "mean attention to token 0", "thickness": 12},
+                hovertemplate="%{customdata}<br>score=%{z:.4f}<extra></extra>",
+            )
+        )
+        strong_layers, strong_heads = np.where(data > threshold)
+        if len(strong_layers) > 0:
+            fig.add_trace(
+                go.Scatter(
+                    x=strong_heads,
+                    y=strong_layers,
+                    mode="markers",
+                    marker={
+                        "symbol": "circle-open",
+                        "size": 14,
+                        "color": "#ffffff",
+                        "line": {"color": "#ffffff", "width": 2},
+                    },
+                    name="above threshold",
+                    hoverinfo="skip",
+                )
+            )
+        fig.update_layout(
+            title="Mean attention to token 0 by layer and head",
+            height=max(360, min(760, 26 * layer_count)),
+            margin={"l": 56, "r": 16, "t": 52, "b": 50},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={"title": "Head", "dtick": 1},
+            yaxis={"title": "Layer", "dtick": 1, "autorange": "reversed"},
+        )
         return fig
 
     def plot_hidden_delta(delta, tokens):
         data = delta.numpy()
-        fig, ax = plt.subplots(figsize=(10, max(3, data.shape[0] * 0.35)))
-        image = ax.imshow(data, cmap="inferno", aspect="auto")
-        ax.set_title("Hidden-state drift after perturbing the prompt")
-        ax.set_xlabel("Token position")
-        ax.set_ylabel("Layer, including embedding layer")
-        ax.set_xticks(range(len(tokens)))
-        ax.set_xticklabels(
-            [f"{index}:{token}" for index, token in enumerate(tokens)],
-            rotation=90,
-            fontsize=8,
+        tick_positions, tick_labels = _sampled_token_ticks(tokens)
+        layer_count, token_count = data.shape
+        hover = [
+            [
+                f"layer {layer}<br>token {token}: {tokens[token]}"
+                for token in range(token_count)
+            ]
+            for layer in range(layer_count)
+        ]
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=data,
+                x=list(range(token_count)),
+                y=list(range(layer_count)),
+                customdata=hover,
+                colorscale="Inferno",
+                colorbar={"title": "L2 drift", "thickness": 12},
+                hovertemplate="%{customdata}<br>drift=%{z:.4f}<extra></extra>",
+            )
         )
-        ax.set_yticks(range(data.shape[0]))
-        fig.colorbar(image, ax=ax, label="L2 drift")
-        fig.tight_layout()
+        fig.update_layout(
+            title="Hidden-state drift after perturbing the prompt",
+            height=max(360, min(760, 24 * layer_count)),
+            margin={"l": 56, "r": 16, "t": 52, "b": 72},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={
+                "title": "Token position",
+                "tickmode": "array",
+                "tickvals": tick_positions,
+                "ticktext": tick_labels,
+                "tickangle": -45,
+            },
+            yaxis={"title": "Layer, including embedding layer", "dtick": 1},
+        )
         return fig
 
-    return plot_attention_matrix, plot_hidden_delta, plot_sink_map
+    def plot_streaming_cache_bars(streaming_cache_summary):
+        labels = ["recent-only cache", "token 0 + recent cache"]
+        values = [
+            streaming_cache_summary["recent_only_attention_mass"],
+            streaming_cache_summary["anchor_plus_recent_attention_mass"],
+        ]
+        fig = go.Figure(
+            data=go.Bar(
+                x=labels,
+                y=values,
+                marker={"color": ["#2563eb", "#111827"]},
+                hovertemplate="%{x}<br>attention mass=%{y:.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="Attention mass preserved for the final token",
+            height=330,
+            margin={"l": 52, "r": 16, "t": 52, "b": 64},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            yaxis={"title": "Mean attention mass", "range": [0, max(1.0, max(values) * 1.12)]},
+            xaxis={"title": ""},
+            showlegend=False,
+        )
+        return fig
+
+    def plot_next_token_distribution(next_tokens):
+        labels = [item["token"] for item in reversed(next_tokens)]
+        values = [item["probability"] for item in reversed(next_tokens)]
+        fig = go.Figure(
+            data=go.Bar(
+                x=values,
+                y=labels,
+                orientation="h",
+                marker={"color": "#2563eb"},
+                hovertemplate="token=%{y}<br>probability=%{x:.4f}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="Top next-token probabilities",
+            height=max(320, 34 * len(labels)),
+            margin={"l": 118, "r": 16, "t": 52, "b": 48},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={"title": "Probability"},
+            yaxis={"title": ""},
+            showlegend=False,
+        )
+        return fig
+
+    return (
+        plot_attention_flow,
+        plot_attention_matrix,
+        plot_hidden_delta,
+        plot_next_token_distribution,
+        plot_sink_map,
+        plot_streaming_cache_bars,
+    )
 
 
 @app.cell(hide_code=True)
-def _(head_index, layer_index, plot_attention_matrix, probe):
+def _(head_index, layer_index, mo, plot_attention_matrix, probe):
     if probe is None:
-        selected_attention_fig = None
+        selected_attention_output = mo.md(
+            """
+            ## 5. Inspect one attention head
+
+            Run a probe to reveal the token-by-token attention heatmap.
+            """
+        ).callout(kind="info")
     else:
         _layer = min(int(layer_index.value), probe["attention"].shape[0] - 1)
         _head = min(int(head_index.value), probe["attention"].shape[1] - 1)
@@ -963,26 +1505,114 @@ def _(head_index, layer_index, plot_attention_matrix, probe):
             _layer,
             _head,
         )
+        selected_attention_output = mo.vstack(
+            [
+                mo.md(
+                    """
+                    ## 5. Inspect one attention head
 
-    selected_attention_fig
+                    Hover any cell to see which query token attended to which key token.
+                    A dark vertical stripe at key position 0 is the sink signature.
+                    """
+                ),
+                selected_attention_fig,
+            ],
+            gap=0.75,
+        )
+
+    selected_attention_output
     return
 
 
 @app.cell(hide_code=True)
-def _(plot_sink_map, sink_scores, sink_threshold):
+def _(mo, probe):
+    if probe is None:
+        query_token_index = mo.ui.slider(
+            start=0,
+            stop=0,
+            step=1,
+            value=0,
+            show_value=True,
+            label="Query token",
+            full_width=True,
+        )
+        query_token_view = mo.md(
+            "The query-token selector appears after a successful probe."
+        ).callout(kind="info")
+    else:
+        _last_token = max(0, len(probe["tokens"]) - 1)
+        query_token_index = mo.ui.slider(
+            start=0,
+            stop=_last_token,
+            step=1,
+            value=_last_token,
+            show_value=True,
+            label="Query token",
+            full_width=True,
+        )
+        query_token_view = mo.vstack(
+            [
+                mo.md(
+                    """
+                    ## 6. Follow one token's routing
+
+                    Pick a query token and inspect which earlier tokens the
+                    selected head attends to most strongly.
+                    """
+                ),
+                query_token_index,
+            ],
+            gap=0.75,
+        )
+    query_token_view
+    return (query_token_index,)
+
+
+@app.cell(hide_code=True)
+def _(head_index, layer_index, plot_attention_flow, probe, query_token_index):
+    if probe is None:
+        attention_flow_fig = None
+    else:
+        _layer = min(int(layer_index.value), probe["attention"].shape[0] - 1)
+        _head = min(int(head_index.value), probe["attention"].shape[1] - 1)
+        _query = min(int(query_token_index.value), len(probe["tokens"]) - 1)
+        attention_flow_fig = plot_attention_flow(probe, _layer, _head, _query)
+
+    attention_flow_fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, plot_sink_map, sink_scores, sink_threshold):
     if sink_scores is None:
-        sink_map_fig = None
+        sink_map_output = mo.md(
+            "Sink atlas is waiting for a successful model probe."
+        ).callout(kind="info")
     else:
         sink_map_fig = plot_sink_map(sink_scores, float(sink_threshold.value))
+        sink_map_output = mo.vstack(
+            [
+                mo.md(
+                    """
+                    ## 7. Sink atlas
 
-    sink_map_fig
+                    Each tile is one layer/head pair. White rings mark heads
+                    above the selected strong-sink threshold.
+                    """
+                ),
+                sink_map_fig,
+            ],
+            gap=0.75,
+        )
+
+    sink_map_output
     return
 
 
 @app.cell(hide_code=True)
 def _(mo, sink_table):
     strongest_sink_heads = sink_table.head(12) if sink_table is not None else None
-    mo.vstack([mo.md("## 5. Strongest sink heads"), strongest_sink_heads])
+    mo.vstack([mo.md("## 8. Strongest sink heads"), strongest_sink_heads])
     return
 
 
@@ -1001,7 +1631,7 @@ def _(mo):
         [
             mo.md(
                 """
-                ## 6. Why streaming systems care
+                ## 9. Why streaming systems care
 
                 A streaming decoder cannot keep every old key/value vector forever.
                 If a recent-only cache drops token 0, how much attention mass does
@@ -1017,7 +1647,15 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo, pd, probe, streaming_cache_diagnostic, streaming_cache_window, torch):
+def _(
+    mo,
+    pd,
+    plot_streaming_cache_bars,
+    probe,
+    streaming_cache_diagnostic,
+    streaming_cache_window,
+    torch,
+):
     if probe is None or pd is None:
         streaming_cache_table = None
         _streaming_output = mo.md("Streaming diagnostic is waiting for a successful model probe.").callout(kind="info")
@@ -1028,8 +1666,10 @@ def _(mo, pd, probe, streaming_cache_diagnostic, streaming_cache_window, torch):
             torch,
         )
         streaming_cache_table = pd.DataFrame([streaming_cache_summary])
+        streaming_cache_fig = plot_streaming_cache_bars(streaming_cache_summary)
         _streaming_output = mo.vstack(
             [
+                streaming_cache_fig,
                 streaming_cache_table,
                 mo.md(
                     """
@@ -1050,17 +1690,21 @@ def _(mo, pd, probe, streaming_cache_diagnostic, streaming_cache_window, torch):
 def _(
     analysis_prompt,
     device,
-    max_tokens,
     model,
     model_error,
     perturb_prompt,
+    probe_config,
+    probe_run_requested,
     run_attention_probe,
     tokenizer,
     torch,
 ):
-    perturbed_prompt = perturb_prompt(analysis_prompt)
+    perturbed_prompt = perturb_prompt(analysis_prompt) if analysis_prompt else None
 
-    if model_error is not None or model is None:
+    if not probe_run_requested:
+        perturbed_probe = None
+        perturb_error = None
+    elif model_error is not None or model is None or perturbed_prompt is None:
         perturbed_probe = None
         perturb_error = model_error
     else:
@@ -1071,7 +1715,7 @@ def _(
                 tokenizer,
                 device,
                 torch,
-                max_tokens.value,
+                probe_config.max_tokens,
             )
             perturb_error = None
         except Exception as exc:  # noqa: BLE001 - show perturb failures in UI.
@@ -1082,20 +1726,30 @@ def _(
 
 @app.cell(hide_code=True)
 def _(mo, perturbed_prompt):
-    mo.md(f"""
-    ## 7. Perturbation probe
+    if perturbed_prompt is None:
+        perturb_prompt_view = mo.md(
+            """
+            ## 10. Perturbation probe
 
-    The paper uses perturbation experiments to argue that sinks can reduce
-    how strongly information spreads across token positions. This miniature
-    version changes one word and measures hidden-state drift by layer and
-    token position.
+            Waiting for a successful attention probe.
+            """
+        ).callout(kind="info")
+    else:
+        perturb_prompt_view = mo.md(f"""
+        ## 10. Perturbation probe
 
-    Perturbed prompt:
+        The paper uses perturbation experiments to argue that sinks can reduce
+        how strongly information spreads across token positions. This miniature
+        version changes one word and measures hidden-state drift by layer and
+        token position.
 
-    ```text
-    {perturbed_prompt}
-    ```
-    """)
+        Perturbed prompt:
+
+        ```text
+        {perturbed_prompt}
+        ```
+        """)
+    perturb_prompt_view
     return
 
 
@@ -1204,7 +1858,7 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
         [
             mo.md(
                 """
-                ## 8. Cloud GPU exploration
+                ## 11. Cloud GPU exploration
 
                 The local path proves the mechanics. The molab path is where we
                 test the paper-shaped claim at a more serious scale: larger
@@ -1440,6 +2094,7 @@ def _(
     load_model_bundle,
     measure_anchor_effect,
     pd,
+    probe_config,
     selected_precision_key,
     selected_prompt,
     sink_threshold,
@@ -1453,6 +2108,7 @@ def _(
         comparison_table = None
     else:
         _comparison_rows = []
+        _sweep_prompt = probe_config.prompt if probe_config is not None else selected_prompt
         if comparison_run_mode.value == "Run RTX family sweep":
             _comparison_labels = DEFAULT_SWEEP_MODELS
         else:
@@ -1468,7 +2124,7 @@ def _(
             _comparison_rows.extend(
                 measure_anchor_effect(
                     _model_id,
-                    selected_prompt,
+                    _sweep_prompt,
                     load_model_bundle,
                     selected_precision_key,
                     torch,
@@ -1518,6 +2174,7 @@ def _(
     load_model_bundle,
     measure_context_sweep,
     pd,
+    probe_config,
     selected_precision_key,
     selected_prompt,
     sink_threshold,
@@ -1527,10 +2184,11 @@ def _(
         context_sweep_table = None
     else:
         _context_model_id = MODEL_OPTIONS[context_sweep_model.value]
+        _context_prompt = probe_config.prompt if probe_config is not None else selected_prompt
         context_sweep_table = pd.DataFrame(
             measure_context_sweep(
                 _context_model_id,
-                selected_prompt,
+                _context_prompt,
                 CONTEXT_SWEEP_BUDGETS,
                 load_model_bundle,
                 selected_precision_key,
@@ -1570,16 +2228,21 @@ def _(context_sweep_table, mo):
 
 
 @app.cell(hide_code=True)
-def _(mo, probe):
-    next_token_output = probe["next_tokens"] if probe is not None else None
-    mo.vstack([mo.md("## 9. Next-token distribution"), next_token_output])
+def _(mo, plot_next_token_distribution, probe):
+    if probe is None:
+        next_token_output = mo.md(
+            "Next-token distribution is waiting for a successful model probe."
+        ).callout(kind="info")
+    else:
+        next_token_output = plot_next_token_distribution(probe["next_tokens"])
+    mo.vstack([mo.md("## 12. Next-token distribution"), next_token_output])
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md("""
-    ## 10. Why this weird token matters
+    ## Why this weird token matters
 
     The core reproduction sections focus on paper-faithful claims: perturbation
     spread, larger models, longer contexts, and streaming attention. Two other
@@ -1598,7 +2261,7 @@ def _(mo):
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md("""
     ## Shareable notebook arc
