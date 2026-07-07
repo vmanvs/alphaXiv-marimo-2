@@ -82,7 +82,7 @@ def _(mo):
     <div class="sink-hero">
       <div class="sink-hero__grid">
         <div>
-          <div class="sink-pill">Paper explainer · cloud GPU lab</div>
+          <div class="sink-pill">Paper explainer · local lab</div>
           <h1>The first token is a circuit breaker</h1>
           <p style="margin:0;max-width:680px;color:#374151;font-size:1.05rem;line-height:1.55;">
             Large language models often pour attention into token 0. This notebook asks
@@ -91,9 +91,9 @@ def _(mo):
             over-mixing.
           </p>
           <p style="margin:16px 0 0;color:#475569;font-size:0.93rem;line-height:1.5;">
-            Built for the alphaXiv x marimo notebook competition and tuned for
-            molab with an RTX Pro 6000. A separate local notebook keeps the
-            small-model tinkering path out of this competition run.
+            Local companion notebook for small causal language models. It keeps
+            the same attention-sink mechanics but avoids cloud-only model
+            choices and long RTX sweeps.
           </p>
         </div>
         <div class="sink-card">
@@ -152,7 +152,7 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Reader's note.** For the best experience, run all cells once, turn **show code** off, and read vertically from top to bottom. This competition notebook is tuned for molab with the attached RTX Pro 6000. If you want to tinker locally with small models and CPU-friendly defaults, use `notebooks/first_token_sink_local.py` from the GitHub repo.
+    **Reader's note.** This companion notebook is tuned for local tinkering with small Hugging Face models. Use `notebooks/first_token_sink.py` for the competition/molab version with larger cloud GPU sweeps.
     """)
     return
 
@@ -346,7 +346,6 @@ def _():
 
     try:
         import gc
-        import os
         import numpy as np
         import pandas as pd
         import matplotlib.pyplot as plt
@@ -363,7 +362,6 @@ def _():
         gc,
         go,
         np,
-        os,
         pd,
         plt,
         torch,
@@ -396,84 +394,26 @@ def _(dependency_error, mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    hf_token_input = mo.ui.text(
-        kind="password",
-        placeholder="Optional: paste a Hugging Face read token for gated models",
-        label="Hugging Face token",
-        full_width=True,
-    )
-    hf_token_form = hf_token_input.form(
-        label="Use token for this session",
-        clear_on_submit=True,
-    )
-    mo.vstack(
-        [
-            mo.md(
-                """
-                **Optional for gated models.** Public Qwen models do not need a
-                Hugging Face token. Gemma and LLaMA-style gated models require
-                either an `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` environment
-                variable in the cloud runtime, or a token submitted here for
-                this session. The token is never displayed by the notebook.
-                """
-            ).callout(kind="info"),
-            hf_token_form,
-        ],
-        gap=0.75,
-    )
-    return (hf_token_form,)
-
-
-@app.cell(hide_code=True)
-def _(hf_token_form, mo, os):
-    env_hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    submitted_hf_token = (hf_token_form.value or "").strip()
-    hf_token = env_hf_token or submitted_hf_token or None
-    if env_hf_token:
-        hf_token_source = "environment"
-    elif submitted_hf_token:
-        hf_token_source = "session input"
-    else:
-        hf_token_source = "none"
-
-    hf_token_status = {
-        "source": hf_token_source,
-        "available": hf_token is not None,
-    }
-    mo.md(
-        f"""
-        Hugging Face auth: `{hf_token_source}`.
-        """
-    ).callout(kind="success" if hf_token is not None else "info")
-    return hf_token, hf_token_status
-
-
-@app.cell(hide_code=True)
 def _():
     PAPER_URL = "https://arxiv.org/abs/2504.02732"
     ALPHAXIV_URL = "https://www.alphaxiv.org/abs/2504.02732"
 
     MODEL_OPTIONS = {
-        "Qwen2.5 0.5B open": "Qwen/Qwen2.5-0.5B",
-        "Qwen2.5 1.5B open": "Qwen/Qwen2.5-1.5B",
-        "Qwen2.5 7B open": "Qwen/Qwen2.5-7B",
-        "Qwen2.5 14B open": "Qwen/Qwen2.5-14B",
-        "Gemma 2 2B auth may be required": "google/gemma-2-2b",
-        "Gemma 2 9B auth may be required": "google/gemma-2-9b",
-        "LLaMA 3.1 8B auth required": "meta-llama/Llama-3.1-8B",
+        "tiny-gpt2 sanity check": "sshleifer/tiny-gpt2",
+        "distilgpt2 local default": "distilgpt2",
+        "GPT-2 small": "gpt2",
+        "GPT-2 medium": "openai-community/gpt2-medium",
     }
 
     DEFAULT_SWEEP_MODELS = [
-        "Qwen2.5 1.5B open",
-        "Qwen2.5 7B open",
-        "Gemma 2 9B auth may be required",
-        "LLaMA 3.1 8B auth required",
+        "distilgpt2 local default",
+        "GPT-2 small",
+        "GPT-2 medium",
     ]
 
     EXECUTION_MODES = [
-        "Cloud GPU single model",
-        "Cloud GPU sweep",
+        "Local CPU/GPU single model",
+        "Local CPU/GPU sweep",
     ]
 
     PRECISION_OPTIONS = {
@@ -493,7 +433,7 @@ def _():
             "Madrid is the capital of Spain. Rome is the capital of Italy. "
             "The next country in the list is"
         ),
-        "Cloud long-context attention sink probe": (
+        "Local long-context attention sink probe": (
             "We are studying why transformer attention heads sometimes route mass "
             "to the first token. The prompt contains repeated notes about long "
             "context, streaming inference, perturbation spread, and model scale."
@@ -541,10 +481,10 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
     | Training/context-length experiments | Longer context produces stronger sinks even at similar validation loss. |
     | Downstream removal test | Removing the sink hurts performance, especially on long-context evaluation. |
 
-    This notebook reproduces the shape of the Gemma perturbation experiment,
-    then uses molab's cloud GPU path to ask a shareable question: **does the
-    sink-as-circuit-breaker story generalize across Qwen, Gemma, and LLaMA-style
-    model families?**
+    This local notebook reproduces the mechanics with small, accessible models.
+    The point is fast iteration: change prompts, anchors, heads, and context
+    budgets locally before moving the larger-family question to the molab
+    competition notebook.
 
     Links: [alphaXiv]({ALPHAXIV_URL}) | [arXiv]({PAPER_URL})
     """)
@@ -555,13 +495,13 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
 def _(ANCHOR_MODES, EXECUTION_MODES, MODEL_OPTIONS, PRECISION_OPTIONS, PROMPT_PRESETS, mo):
     execution_mode = mo.ui.dropdown(
         options=EXECUTION_MODES,
-        value="Cloud GPU single model",
+        value="Local CPU/GPU single model",
         label="Execution mode",
         full_width=True,
     )
     model_choice = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
-        value="Qwen2.5 7B open",
+        value="distilgpt2 local default",
         label="Model",
         full_width=True,
     )
@@ -811,7 +751,7 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
         return torch.float16
 
     @lru_cache(maxsize=1)
-    def load_model_bundle(model_id, precision_key="fp16", hf_token=None):
+    def load_model_bundle(model_id, precision_key="fp16"):
         if dependency_error is not None:
             return None, None, None, None, dependency_error
 
@@ -821,13 +761,11 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            _auth_kwargs = {"token": hf_token} if hf_token else {}
-
-            tokenizer = AutoTokenizer.from_pretrained(model_id, **_auth_kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token or tokenizer.bos_token
 
-            _model_kwargs = {"low_cpu_mem_usage": True, **_auth_kwargs}
+            _model_kwargs = {"low_cpu_mem_usage": True}
             _dtype = _cuda_dtype(precision_key, device)
             if _dtype is not None:
                 _model_kwargs["torch_dtype"] = _dtype
@@ -857,7 +795,6 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
 def _(
     MODEL_OPTIONS,
     PRECISION_OPTIONS,
-    hf_token,
     load_model_bundle,
     model_choice,
     precision_choice,
@@ -877,7 +814,6 @@ def _(
         tokenizer, model, device, model_dtype, model_error = load_model_bundle(
             selected_model_id,
             selected_precision_key,
-            hf_token,
         )
     else:
         tokenizer = None
@@ -1863,23 +1799,23 @@ def _(hidden_delta, mo, perturb_error):
 def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
     comparison_run_mode = mo.ui.dropdown(
         options=[
-            "Skip cloud sweep",
+            "Skip local sweep",
             "Run selected pair",
-            "Run RTX family sweep",
+            "Run local family sweep",
         ],
-        value="Skip cloud sweep",
+        value="Skip local sweep",
         label="Model-family sweep",
         full_width=True,
     )
     comparison_model_a = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
-        value="Qwen2.5 7B open",
+        value="GPT-2 small",
         label="Reference model",
         full_width=True,
     )
     comparison_model_b = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
-        value="Qwen2.5 14B open",
+        value="GPT-2 medium",
         label="Comparison model",
         full_width=True,
     )
@@ -1899,7 +1835,7 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
     )
     context_sweep_model = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
-        value="Qwen2.5 7B open",
+        value="distilgpt2 local default",
         label="Long-context model",
         full_width=True,
     )
@@ -1913,16 +1849,12 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
         [
             mo.md(
                 """
-                ## 11. Cloud GPU exploration
+                ## 11. Local exploration
 
-                The single-model probe proves the mechanics. The molab path is
-                where we test the paper-shaped claim at a more serious scale:
-                larger models, longer contexts, and model families beyond the
-                first example.
-
-                Qwen models are open defaults. Gemma and LLaMA entries are included
-                because they match the paper's evidence more closely, but they may
-                require Hugging Face access in the cloud runtime.
+                This companion path is deliberately modest: compare GPT-style
+                models that can run on a laptop or small local GPU, then use the
+                main molab notebook when you want Qwen, Gemma, LLaMA-style
+                models, and longer RTX-backed sweeps.
                 """
             ),
             mo.hstack([comparison_run_mode, comparison_token_budget], widths="equal", gap=1),
@@ -1967,7 +1899,6 @@ def _(
         base_prompt,
         load_model_bundle,
         precision_key,
-        hf_token,
         torch,
         max_length,
         sink_threshold,
@@ -1975,7 +1906,6 @@ def _(
         _tokenizer, _model, _device, _model_dtype, _model_error = load_model_bundle(
             model_id,
             precision_key,
-            hf_token,
         )
         if _model_error is not None or _model is None:
             return [
@@ -2044,7 +1974,7 @@ def _(
                         "error": "",
                     }
                 )
-        except Exception as exc:  # noqa: BLE001 - surface cloud runtime failures.
+        except Exception as exc:  # noqa: BLE001 - surface local runtime failures.
             return [
                 {
                     "model": model_id,
@@ -2067,14 +1997,12 @@ def _(
         budgets,
         load_model_bundle,
         precision_key,
-        hf_token,
         torch,
         sink_threshold,
     ):
         _tokenizer, _model, _device, _model_dtype, _model_error = load_model_bundle(
             model_id,
             precision_key,
-            hf_token,
         )
         if _model_error is not None or _model is None:
             return [
@@ -2150,7 +2078,6 @@ def _(
     comparison_run_button,
     comparison_run_mode,
     comparison_token_budget,
-    hf_token,
     load_model_bundle,
     measure_anchor_effect,
     pd,
@@ -2161,7 +2088,7 @@ def _(
     torch,
 ):
     if (
-        comparison_run_mode.value == "Skip cloud sweep"
+        comparison_run_mode.value == "Skip local sweep"
         or not comparison_run_button.value
         or pd is None
     ):
@@ -2169,7 +2096,7 @@ def _(
     else:
         _comparison_rows = []
         _sweep_prompt = probe_config.prompt if probe_config is not None else selected_prompt
-        if comparison_run_mode.value == "Run RTX family sweep":
+        if comparison_run_mode.value == "Run local family sweep":
             _comparison_labels = DEFAULT_SWEEP_MODELS
         else:
             _comparison_labels = [comparison_model_a.value, comparison_model_b.value]
@@ -2187,7 +2114,6 @@ def _(
                     _sweep_prompt,
                     load_model_bundle,
                     selected_precision_key,
-                    hf_token,
                     torch,
                     comparison_token_budget.value,
                     sink_threshold.value,
@@ -2202,9 +2128,9 @@ def _(comparison_table, mo):
     if comparison_table is None:
         _comparison_output = mo.md(
             """
-            The model-family sweep is skipped by default because it can load
-            multiple large models. Choose a sweep mode and click the run button
-            in molab after attaching the RTX Pro 6000.
+            The local sweep is skipped by default because it can still load
+            multiple Hugging Face models. Choose a sweep mode and click the run
+            button when you want to compare small local models.
             """
         ).callout(kind="info")
     else:
@@ -2232,7 +2158,6 @@ def _(
     MODEL_OPTIONS,
     context_sweep_button,
     context_sweep_model,
-    hf_token,
     load_model_bundle,
     measure_context_sweep,
     pd,
@@ -2254,7 +2179,6 @@ def _(
                 CONTEXT_SWEEP_BUDGETS,
                 load_model_bundle,
                 selected_precision_key,
-                hf_token,
                 torch,
                 sink_threshold.value,
             )
@@ -2267,7 +2191,7 @@ def _(context_sweep_table, mo):
     if context_sweep_table is None:
         _context_sweep_output = mo.md(
             """
-            The context-length sweep is waiting for a cloud GPU run. This is the
+            The context-length sweep is waiting for a local run. This is the
             section that most directly tests the paper's claim that sink behavior
             becomes more useful as context length grows.
             """
@@ -2335,7 +2259,7 @@ def _(mo):
     2. The paper's explanation: the sink can act as an approximate no-op.
     3. A reproduction: perturbation spreads more when the first-token anchor is absent.
     4. A streaming diagnostic: keeping token 0 can preserve otherwise dropped attention mass.
-    5. A cloud GPU exploration: test Qwen, Gemma, and LLaMA-style families.
+    5. A local exploration: compare small GPT-style models before moving to the cloud notebook.
     6. A practical takeaway: attention sinks matter for long context, streaming,
        quantization, and robustness.
 
