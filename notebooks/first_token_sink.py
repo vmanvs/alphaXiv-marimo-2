@@ -122,7 +122,7 @@ def _(mo):
               </radialGradient>
             </defs>
             <rect x="0" y="0" width="320" height="148" rx="8" fill="url(#sink-bg)"/>
-            <circle cx="62" cy="74" r="16" fill="#111827"/>
+            <circle cx="62" cy="74" r="16" fill="#16a34a"/>
             <text x="62" y="79" text-anchor="middle" font-size="13" fill="#ffffff" font-weight="800">0</text>
             <g fill="url(#sink-token)" stroke="#ffffff" stroke-width="1.4">
               <circle cx="150" cy="35" r="7"/>
@@ -229,9 +229,9 @@ def _(mo):
           white-space: nowrap;
           transition: width 180ms ease;
         }
-        #sink-playground .sink-zero { background: #111827; }
+        #sink-playground .sink-zero { background: #16a34a; }
         #sink-playground .sink-recent { background: #2563eb; }
-        #sink-playground .sink-semantic { background: #16a34a; }
+        #sink-playground .sink-semantic { background: #ca8a04; }
         #sink-playground .sink-meter {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -509,6 +509,13 @@ def _():
         "Plain prompt only",
         "Visible neutral anchor",
     ]
+    TOKEN_BUDGET_OPTIONS = {
+        "64 tokens": 64,
+        "128 tokens": 128,
+        "512 tokens": 512,
+        "1024 tokens": 1024,
+        "2048 tokens": 2048,
+    }
     CONTEXT_SWEEP_BUDGETS = [128, 256, 512, 1024, 2048]
 
     return (
@@ -521,6 +528,7 @@ def _():
         PAPER_URL,
         PRECISION_OPTIONS,
         PROMPT_PRESETS,
+        TOKEN_BUDGET_OPTIONS,
     )
 
 
@@ -552,7 +560,15 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
 
 
 @app.cell(hide_code=True)
-def _(ANCHOR_MODES, EXECUTION_MODES, MODEL_OPTIONS, PRECISION_OPTIONS, PROMPT_PRESETS, mo):
+def _(
+    ANCHOR_MODES,
+    EXECUTION_MODES,
+    MODEL_OPTIONS,
+    PRECISION_OPTIONS,
+    PROMPT_PRESETS,
+    TOKEN_BUDGET_OPTIONS,
+    mo,
+):
     execution_mode = mo.ui.dropdown(
         options=EXECUTION_MODES,
         value="Cloud GPU single model",
@@ -591,12 +607,9 @@ def _(ANCHOR_MODES, EXECUTION_MODES, MODEL_OPTIONS, PRECISION_OPTIONS, PROMPT_PR
         label="First-position anchor",
         full_width=True,
     )
-    max_tokens = mo.ui.slider(
-        start=32,
-        stop=512,
-        step=32,
-        value=96,
-        show_value=True,
+    max_tokens = mo.ui.dropdown(
+        options=list(TOKEN_BUDGET_OPTIONS.keys()),
+        value="512 tokens",
         label="Max tokens to inspect",
         full_width=True,
     )
@@ -644,6 +657,7 @@ def _(
     MODEL_OPTIONS,
     PRECISION_OPTIONS,
     SimpleNamespace,
+    TOKEN_BUDGET_OPTIONS,
     anchor_mode,
     execution_mode,
     max_tokens,
@@ -662,7 +676,7 @@ def _(
         prompt_preset=selected_preset_name,
         prompt=selected_prompt,
         anchor_mode=anchor_mode.value,
-        max_tokens=int(max_tokens.value),
+        max_tokens=int(TOKEN_BUDGET_OPTIONS[max_tokens.value]),
         sink_threshold=float(sink_threshold.value),
     )
     return (current_probe_config,)
@@ -900,13 +914,13 @@ def _(
 @app.cell(hide_code=True)
 def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_requested, selected_model_id, torch):
     if probe_config is None:
-        mo.md(
+        model_status_output = mo.md(
             """
             Model status: waiting for a selected probe configuration.
             """
         ).callout(kind="info")
     elif not probe_run_requested:
-        mo.md(
+        model_status_output = mo.md(
             f"""
             Model status: ready to run `{selected_model_id}`.
 
@@ -915,7 +929,7 @@ def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_reque
             """
         ).callout(kind="info")
     elif model_error is not None:
-        mo.md(
+        model_status_output = mo.md(
             f"""
             Model could not be loaded.
 
@@ -925,72 +939,77 @@ def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_reque
             """
         ).callout(kind="warn")
     elif model is None:
-        mo.md("Model status: waiting for the run button.").callout(kind="info")
+        model_status_output = mo.md("Model status: loading or waiting for the run button.").callout(kind="info")
     else:
-        cuda_line = ""
-        if torch.cuda.is_available():
-            cuda_line = f"GPU: `{torch.cuda.get_device_name(0)}`"
-        else:
-            cuda_line = "GPU: not available in this runtime; using CPU fallback."
-
-        mo.md(
-            f"""
-            Loaded `{selected_model_id}` on `{device}`.
-
-            Dtype: `{model_dtype}`. {cuda_line}
-            """
-        ).callout(kind="info")
+        model_status_output = None
+    model_status_output
     return
 
 
 @app.cell(hide_code=True)
-def _(mo, model):
-    if model is None:
-        num_layers = 1
-        num_heads = 1
+def _(mo, probe, sink_scores):
+    selected_layer_index = 0
+    selected_head_index = 0
+    selected_head_score = None
+
+    if probe is None or sink_scores is None:
+        head_picker_view = mo.md(
+            """
+            ## 2. Pick a head to inspect
+
+            The layer/head controls appear after the attention probe finishes.
+            The notebook will preselect the strongest first-token sink head so
+            the first heatmap is immediately meaningful.
+            """
+        ).callout(kind="info")
     else:
-        num_layers = int(
-            getattr(
-                model.config,
-                "n_layer",
-                getattr(model.config, "num_hidden_layers", 1),
-            )
+        layer_count, head_count = sink_scores.shape
+        strongest_flat_index = int(sink_scores.flatten().argmax().item())
+        strongest_layer = int(strongest_flat_index // head_count)
+        strongest_head = int(strongest_flat_index % head_count)
+        strongest_score = float(sink_scores[strongest_layer, strongest_head])
+
+        layer_index_control = mo.ui.slider(
+            start=0,
+            stop=max(0, layer_count - 1),
+            step=1,
+            value=strongest_layer,
+            show_value=True,
+            label="Layer",
+            full_width=True,
         )
-        num_heads = int(
-            getattr(
-                model.config,
-                "n_head",
-                getattr(model.config, "num_attention_heads", 1),
-            )
+        head_index_control = mo.ui.slider(
+            start=0,
+            stop=max(0, head_count - 1),
+            step=1,
+            value=strongest_head,
+            show_value=True,
+            label="Head",
+            full_width=True,
+        )
+        selected_layer_index = min(int(layer_index_control.value), layer_count - 1)
+        selected_head_index = min(int(head_index_control.value), head_count - 1)
+        selected_head_score = float(sink_scores[selected_layer_index, selected_head_index])
+
+        head_picker_view = mo.vstack(
+            [
+                mo.md(
+                    f"""
+                    ## 2. Pick a head to inspect
+
+                    Preselected **L{strongest_layer} H{strongest_head}** because
+                    it has the highest first-token sink score in this run
+                    ({strongest_score:.3f}). Use the controls to audit any other
+                    layer/head pair.
+                    """
+                ).callout(kind="info"),
+                mo.hstack([layer_index_control, head_index_control], widths="equal", gap=1),
+            ],
+            gap=1,
         )
 
-    layer_index = mo.ui.slider(
-        start=0,
-        stop=max(0, num_layers - 1),
-        step=1,
-        value=min(2, max(0, num_layers - 1)),
-        show_value=True,
-        label="Layer",
-        full_width=True,
-    )
-    head_index = mo.ui.slider(
-        start=0,
-        stop=max(0, num_heads - 1),
-        step=1,
-        value=min(3, max(0, num_heads - 1)),
-        show_value=True,
-        label="Head",
-        full_width=True,
-    )
-
-    mo.vstack(
-        [
-            mo.md("## 2. Pick a head to inspect"),
-            mo.hstack([layer_index, head_index], widths="equal", gap=1),
-        ],
-        gap=1,
-    )
-    return head_index, layer_index
+    head_picker_view
+    return selected_head_index, selected_head_score, selected_layer_index
 
 
 @app.cell(hide_code=True)
@@ -1258,10 +1277,10 @@ def _(pd, probe, sink_threshold, summarize_attention_sink, torch):
 
 @app.cell(hide_code=True)
 def _(
-    head_index,
-    layer_index,
     mo,
     probe,
+    selected_head_index,
+    selected_layer_index,
     sink_rate,
     sink_scores,
     sink_threshold,
@@ -1269,8 +1288,8 @@ def _(
     if probe is None or sink_scores is None:
         _sink_metric_output = mo.md("Sink metrics are waiting for a successful model probe.")
     else:
-        _layer = min(int(layer_index.value), sink_scores.shape[0] - 1)
-        _head = min(int(head_index.value), sink_scores.shape[1] - 1)
+        _layer = min(int(selected_layer_index), sink_scores.shape[0] - 1)
+        _head = min(int(selected_head_index), sink_scores.shape[1] - 1)
         _selected_sink = float(sink_scores[_layer, _head])
         _last_token_sink = float(probe["attention"][_layer, _head, -1, 0])
 
@@ -1298,6 +1317,18 @@ def _(
 
 @app.cell(hide_code=True)
 def _(go, np):
+    BLUE = "#2563eb"
+    LIGHT_BLUE = "#eff6ff"
+    SKY = "#38bdf8"
+    GREEN = "#16a34a"
+    YELLOW = "#facc15"
+    SINK_COLORSCALE = [
+        [0.0, LIGHT_BLUE],
+        [0.35, SKY],
+        [0.70, GREEN],
+        [1.0, YELLOW],
+    ]
+
     def _sampled_token_ticks(tokens, max_ticks=28):
         if not tokens:
             return [], []
@@ -1326,7 +1357,7 @@ def _(go, np):
                 x=list(range(token_count)),
                 y=list(range(token_count)),
                 customdata=hover,
-                colorscale="Magma",
+                colorscale=SINK_COLORSCALE,
                 zmin=0.0,
                 zmax=max(0.05, float(np.nanmax(data))),
                 colorbar={"title": "attention", "thickness": 12},
@@ -1364,7 +1395,7 @@ def _(go, np):
         top_positions = top_positions[np.argsort(attention_row[top_positions])]
         labels = [f"{position}: {probe['tokens'][position][:22]}" for position in top_positions]
         values = attention_row[top_positions]
-        colors = ["#111827" if int(position) == 0 else "#2563eb" for position in top_positions]
+        colors = [GREEN if int(position) == 0 else BLUE for position in top_positions]
         fig = go.Figure(
             data=go.Bar(
                 x=values,
@@ -1406,7 +1437,7 @@ def _(go, np):
                 x=list(range(head_count)),
                 y=list(range(layer_count)),
                 customdata=hover,
-                colorscale="Viridis",
+                colorscale=SINK_COLORSCALE,
                 zmin=0.0,
                 zmax=max(0.75, float(np.nanmax(data))),
                 colorbar={"title": "mean attention to token 0", "thickness": 12},
@@ -1458,7 +1489,7 @@ def _(go, np):
                 x=list(range(token_count)),
                 y=list(range(layer_count)),
                 customdata=hover,
-                colorscale="Inferno",
+                colorscale=SINK_COLORSCALE,
                 colorbar={"title": "L2 drift", "thickness": 12},
                 hovertemplate="%{customdata}<br>drift=%{z:.4f}<extra></extra>",
             )
@@ -1490,7 +1521,7 @@ def _(go, np):
             data=go.Bar(
                 x=labels,
                 y=values,
-                marker={"color": ["#2563eb", "#111827"]},
+                marker={"color": [BLUE, GREEN]},
                 hovertemplate="%{x}<br>attention mass=%{y:.4f}<extra></extra>",
             )
         )
@@ -1514,7 +1545,7 @@ def _(go, np):
                 x=values,
                 y=labels,
                 orientation="h",
-                marker={"color": "#2563eb"},
+                marker={"color": BLUE},
                 hovertemplate="token=%{y}<br>probability=%{x:.4f}<extra></extra>",
             )
         )
@@ -1541,7 +1572,14 @@ def _(go, np):
 
 
 @app.cell(hide_code=True)
-def _(head_index, layer_index, mo, plot_attention_matrix, probe):
+def _(
+    mo,
+    plot_attention_matrix,
+    probe,
+    selected_head_index,
+    selected_head_score,
+    selected_layer_index,
+):
     if probe is None:
         selected_attention_output = mo.md(
             """
@@ -1551,8 +1589,13 @@ def _(head_index, layer_index, mo, plot_attention_matrix, probe):
             """
         ).callout(kind="info")
     else:
-        _layer = min(int(layer_index.value), probe["attention"].shape[0] - 1)
-        _head = min(int(head_index.value), probe["attention"].shape[1] - 1)
+        _layer = min(int(selected_layer_index), probe["attention"].shape[0] - 1)
+        _head = min(int(selected_head_index), probe["attention"].shape[1] - 1)
+        _score_line = (
+            f"The selected head sends a mean {selected_head_score:.3f} of its attention to token 0."
+            if selected_head_score is not None
+            else "The selected head is ready for inspection."
+        )
         _selected_matrix = probe["attention"][_layer, _head].numpy()
         selected_attention_fig = plot_attention_matrix(
             _selected_matrix,
@@ -1563,11 +1606,12 @@ def _(head_index, layer_index, mo, plot_attention_matrix, probe):
         selected_attention_output = mo.vstack(
             [
                 mo.md(
-                    """
+                    f"""
                     ## 5. Inspect one attention head
 
                     Hover any cell to see which query token attended to which key token.
-                    A dark vertical stripe at key position 0 is the sink signature.
+                    A bright green-yellow vertical band at key position 0 is the
+                    sink signature. {_score_line}
                     """
                 ),
                 selected_attention_fig,
@@ -1624,12 +1668,12 @@ def _(mo, probe):
 
 
 @app.cell(hide_code=True)
-def _(head_index, layer_index, plot_attention_flow, probe, query_token_index):
+def _(plot_attention_flow, probe, query_token_index, selected_head_index, selected_layer_index):
     if probe is None:
         attention_flow_fig = None
     else:
-        _layer = min(int(layer_index.value), probe["attention"].shape[0] - 1)
-        _head = min(int(head_index.value), probe["attention"].shape[1] - 1)
+        _layer = min(int(selected_layer_index), probe["attention"].shape[0] - 1)
+        _head = min(int(selected_head_index), probe["attention"].shape[1] - 1)
         _query = min(int(query_token_index.value), len(probe["tokens"]) - 1)
         attention_flow_fig = plot_attention_flow(probe, _layer, _head, _query)
 
@@ -1839,14 +1883,24 @@ def _(hidden_delta, mo, perturb_error):
     elif hidden_delta is not None:
         first_layer_mean = float(hidden_delta[1].mean()) if hidden_delta.shape[0] > 1 else 0.0
         final_layer_mean = float(hidden_delta[-1].mean())
+        layer_means = hidden_delta.mean(dim=1)
+        impact_layer = int(layer_means.argmax().item())
+        impact_mean = float(layer_means[impact_layer])
+        impact_label = "embedding layer" if impact_layer == 0 else f"layer {impact_layer}"
         _perturb_summary_output = mo.md(
             f"""
             Perturbation drift summary:
 
             | Layer slice | Mean token drift |
             | --- | ---: |
+            | Highest-impact slice ({impact_label}) | {impact_mean:.3f} |
             | Early layer | {first_layer_mean:.3f} |
             | Final layer | {final_layer_mean:.3f} |
+
+            The heatmap above pre-shows the full perturbation pattern; the
+            highest-impact row is where this one-word change spreads most
+            strongly. Use the head inspector above to compare that effect against
+            the strongest sink heads.
 
             Try switching the first-position anchor between the special token,
             the plain prompt, and a visible neutral anchor. If the sink is acting
@@ -1860,7 +1914,7 @@ def _(hidden_delta, mo, perturb_error):
 
 
 @app.cell(hide_code=True)
-def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
+def _(CONTEXT_SWEEP_BUDGETS, DEFAULT_SWEEP_MODELS, MODEL_OPTIONS, TOKEN_BUDGET_OPTIONS, mo):
     comparison_run_mode = mo.ui.dropdown(
         options=[
             "Skip cloud sweep",
@@ -1883,12 +1937,9 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
         label="Comparison model",
         full_width=True,
     )
-    comparison_token_budget = mo.ui.slider(
-        start=64,
-        stop=512,
-        step=64,
-        value=256,
-        show_value=True,
+    comparison_token_budget = mo.ui.dropdown(
+        options=list(TOKEN_BUDGET_OPTIONS.keys()),
+        value="512 tokens",
         label="Sweep token budget",
         full_width=True,
     )
@@ -1909,6 +1960,23 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
         full_width=True,
     )
 
+    if comparison_run_mode.value == "Run selected pair":
+        comparison_model_view = mo.hstack(
+            [comparison_model_a, comparison_model_b],
+            widths="equal",
+            gap=1,
+        )
+    elif comparison_run_mode.value == "Run RTX family sweep":
+        comparison_model_view = mo.md(
+            "Planned RTX family sweep: "
+            + ", ".join(f"`{label}`" for label in DEFAULT_SWEEP_MODELS)
+            + "."
+        ).callout(kind="info")
+    else:
+        comparison_model_view = mo.md(
+            "Choose **Run selected pair** for a manual comparison, or **Run RTX family sweep** for the fixed cloud benchmark set."
+        ).callout(kind="info")
+
     mo.vstack(
         [
             mo.md(
@@ -1926,7 +1994,7 @@ def _(CONTEXT_SWEEP_BUDGETS, MODEL_OPTIONS, mo):
                 """
             ),
             mo.hstack([comparison_run_mode, comparison_token_budget], widths="equal", gap=1),
-            mo.hstack([comparison_model_a, comparison_model_b], widths="equal", gap=1),
+            comparison_model_view,
             comparison_run_button,
             mo.md(
                 """
@@ -2145,6 +2213,7 @@ def _(
 def _(
     DEFAULT_SWEEP_MODELS,
     MODEL_OPTIONS,
+    TOKEN_BUDGET_OPTIONS,
     comparison_model_a,
     comparison_model_b,
     comparison_run_button,
@@ -2169,6 +2238,7 @@ def _(
     else:
         _comparison_rows = []
         _sweep_prompt = probe_config.prompt if probe_config is not None else selected_prompt
+        _comparison_token_budget = int(TOKEN_BUDGET_OPTIONS[comparison_token_budget.value])
         if comparison_run_mode.value == "Run RTX family sweep":
             _comparison_labels = DEFAULT_SWEEP_MODELS
         else:
@@ -2189,7 +2259,7 @@ def _(
                     selected_precision_key,
                     hf_token,
                     torch,
-                    comparison_token_budget.value,
+                    _comparison_token_budget,
                     sink_threshold.value,
                 )
             )
