@@ -1,0 +1,8 @@
+marimo>=0.19
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+torch>=2.3
+transformers>=4.44
+accelerate>=0.33
+

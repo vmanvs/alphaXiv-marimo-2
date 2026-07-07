@@ -1,0 +1,5 @@
+dev-docs/
+.agents/
+.venv/
+__marimo__/
+__pycache__/
