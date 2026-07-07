@@ -29,7 +29,16 @@ Open the notebook:
 marimo edit notebooks/first_token_sink.py
 ```
 
-The notebook defaults to a small Hugging Face causal language model. For a competition run, use a GPU-backed molab environment and switch to a stronger model such as `gpt2` or `gpt2-medium`.
+The notebook defaults to a small Hugging Face causal language model. For the competition run, sync the repo into molab, attach the RTX Pro 6000 runtime, and use the cloud GPU sections with fp16 enabled.
+
+Recommended cloud sequence:
+
+1. Run the notebook once with `LOCAL · distilgpt2 interactive default` to verify the flow.
+2. Switch to `CLOUD · Qwen2.5 7B open` with `fp16 on CUDA, fp32 on CPU`.
+3. Run the anchor-ablation perturbation probe.
+4. Run the streaming cache diagnostic.
+5. Run the model-family sweep. Qwen should work without special access; Gemma and LLaMA may require Hugging Face authentication.
+6. Run the long-context sweep from 128 to 2048 tokens.
 
 ## Interactivity
 
@@ -38,6 +47,8 @@ The notebook is interactive in the marimo sense: controls define values, and eve
 The first version includes:
 
 - model selector
+- execution mode selector
+- fp16/bf16/fp32 dtype selector
 - prompt preset plus custom prompt
 - first-token anchor mode
 - max token budget
@@ -46,7 +57,10 @@ The first version includes:
 - attention head selector
 - selected-head attention heatmap
 - whole-model sink-rate map
+- streaming-cache diagnostic
 - perturbation probe comparing hidden-state drift after a small prompt edit
+- run-button-gated cloud GPU sweeps across Qwen, Gemma, and LLaMA-style models
+- run-button-gated context-length sweep
 
 ## Competition Checklist
 
@@ -55,5 +69,5 @@ The first version includes:
 - Use marimo UI for real exploration, not decorative controls.
 - Use GPU when available through PyTorch model inference.
 - Keep the notebook readable, deterministic, and self-contained.
+- Keep expensive cloud experiments gated behind explicit run buttons.
 - Publish to molab, record a video under 5 minutes, and submit before the competition deadline.
-
