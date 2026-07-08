@@ -948,9 +948,11 @@ def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_reque
 
 @app.cell(hide_code=True)
 def _(mo, probe, sink_scores):
-    selected_layer_index = 0
-    selected_head_index = 0
-    selected_head_score = None
+    layer_index_control = None
+    head_index_control = None
+    strongest_layer = None
+    strongest_head = None
+    strongest_score = None
 
     if probe is None or sink_scores is None:
         head_picker_view = mo.md(
@@ -963,15 +965,15 @@ def _(mo, probe, sink_scores):
             """
         ).callout(kind="info")
     else:
-        layer_count, head_count = sink_scores.shape
+        _layer_count, _head_count = sink_scores.shape
         strongest_flat_index = int(sink_scores.flatten().argmax().item())
-        strongest_layer = int(strongest_flat_index // head_count)
-        strongest_head = int(strongest_flat_index % head_count)
+        strongest_layer = int(strongest_flat_index // _head_count)
+        strongest_head = int(strongest_flat_index % _head_count)
         strongest_score = float(sink_scores[strongest_layer, strongest_head])
 
         layer_index_control = mo.ui.slider(
             start=0,
-            stop=max(0, layer_count - 1),
+            stop=max(0, _layer_count - 1),
             step=1,
             value=strongest_layer,
             show_value=True,
@@ -980,16 +982,13 @@ def _(mo, probe, sink_scores):
         )
         head_index_control = mo.ui.slider(
             start=0,
-            stop=max(0, head_count - 1),
+            stop=max(0, _head_count - 1),
             step=1,
             value=strongest_head,
             show_value=True,
             label="Head",
             full_width=True,
         )
-        selected_layer_index = min(int(layer_index_control.value), layer_count - 1)
-        selected_head_index = min(int(head_index_control.value), head_count - 1)
-        selected_head_score = float(sink_scores[selected_layer_index, selected_head_index])
 
         head_picker_view = mo.vstack(
             [
@@ -1009,6 +1008,27 @@ def _(mo, probe, sink_scores):
         )
 
     head_picker_view
+    return (
+        head_index_control,
+        layer_index_control,
+        strongest_head,
+        strongest_layer,
+        strongest_score,
+    )
+
+
+@app.cell(hide_code=True)
+def _(head_index_control, layer_index_control, sink_scores):
+    if sink_scores is None or layer_index_control is None or head_index_control is None:
+        selected_layer_index = 0
+        selected_head_index = 0
+        selected_head_score = None
+    else:
+        _layer_count, _head_count = sink_scores.shape
+        selected_layer_index = min(int(layer_index_control.value), _layer_count - 1)
+        selected_head_index = min(int(head_index_control.value), _head_count - 1)
+        selected_head_score = float(sink_scores[selected_layer_index, selected_head_index])
+
     return selected_head_index, selected_head_score, selected_layer_index
 
 
@@ -1960,6 +1980,29 @@ def _(CONTEXT_SWEEP_BUDGETS, DEFAULT_SWEEP_MODELS, MODEL_OPTIONS, TOKEN_BUDGET_O
         full_width=True,
     )
 
+    return (
+        comparison_model_a,
+        comparison_model_b,
+        comparison_run_button,
+        comparison_run_mode,
+        comparison_token_budget,
+        context_sweep_button,
+        context_sweep_model,
+    )
+
+
+@app.cell(hide_code=True)
+def _(
+    DEFAULT_SWEEP_MODELS,
+    comparison_model_a,
+    comparison_model_b,
+    comparison_run_button,
+    comparison_run_mode,
+    comparison_token_budget,
+    context_sweep_button,
+    context_sweep_model,
+    mo,
+):
     if comparison_run_mode.value == "Run selected pair":
         comparison_model_view = mo.hstack(
             [comparison_model_a, comparison_model_b],
@@ -2010,15 +2053,7 @@ def _(CONTEXT_SWEEP_BUDGETS, DEFAULT_SWEEP_MODELS, MODEL_OPTIONS, TOKEN_BUDGET_O
         ],
         gap=1,
     )
-    return (
-        comparison_model_a,
-        comparison_model_b,
-        comparison_run_button,
-        comparison_run_mode,
-        comparison_token_budget,
-        context_sweep_button,
-        context_sweep_model,
-    )
+    return
 
 
 @app.cell(hide_code=True)
