@@ -502,7 +502,7 @@ def _(mo):
         kind="success",
         full_width=True,
     )
-    mo.vstack(
+    _legacy_controls = mo.vstack(
         [
             mo.md(
                 """
@@ -824,7 +824,258 @@ def _(
             ],
             gap=1,
         )
-    mixing_chamber_output
+    _legacy_mixing_chamber_output = mixing_chamber_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    import html as html_lib
+
+    circuit_breaker_html = r"""
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+      <div id="circuit-breaker-challenge">
+        <style>
+          :root {
+            color: #172033;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+          * { box-sizing: border-box; }
+          body { margin: 0; }
+          #circuit-breaker-challenge {
+            background: linear-gradient(145deg, #f8fbff 0%, #ffffff 56%, #f3fbf7 100%);
+            border: 1px solid #d8e2ee;
+            border-radius: 12px;
+            color: #172033;
+            overflow: hidden;
+          }
+          .cb-top {
+            align-items: start;
+            display: grid;
+            gap: 18px;
+            grid-template-columns: minmax(220px, 0.82fr) minmax(0, 1.18fr);
+            padding: 18px 18px 12px;
+          }
+          .cb-controls { display: grid; gap: 14px; }
+          .cb-field { display: grid; gap: 6px; }
+          .cb-field label { color: #334155; font-size: 0.86rem; font-weight: 750; }
+          .cb-value { color: #0f766e; font-variant-numeric: tabular-nums; }
+          .cb-field input { accent-color: #0f766e; width: 100%; }
+          .cb-target {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            color: #1e3a5f;
+            font-size: 0.88rem;
+            line-height: 1.45;
+            padding: 11px 12px;
+          }
+          .cb-metrics { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .cb-metric { background: rgba(255,255,255,0.84); border: 1px solid #dce6f1; border-radius: 8px; padding: 11px; }
+          .cb-metric__label { color: #64748b; font-size: 0.72rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+          .cb-metric__value { color: #0f172a; font-size: 1.25rem; font-weight: 850; margin-top: 5px; }
+          .cb-metric__note { color: #475569; font-size: 0.75rem; line-height: 1.3; margin-top: 3px; }
+          .cb-status {
+            border-top: 1px solid #dce6f1;
+            color: #334155;
+            font-size: 0.88rem;
+            line-height: 1.45;
+            padding: 11px 18px;
+          }
+          .cb-status strong { color: #0f172a; }
+          .cb-grid-wrap { overflow-x: auto; padding: 4px 18px 18px; }
+          .cb-grid { display: grid; gap: 5px; min-width: 610px; }
+          .cb-grid__head { align-items: center; color: #64748b; display: grid; font-size: 0.72rem; font-weight: 800; grid-template-columns: 116px repeat(7, minmax(48px, 1fr)); text-align: center; }
+          .cb-grid__head span:first-child { text-align: left; }
+          .cb-row { align-items: center; display: grid; gap: 5px; grid-template-columns: 116px repeat(7, minmax(48px, 1fr)); }
+          .cb-token { color: #334155; font-size: 0.78rem; font-weight: 750; line-height: 1.2; }
+          .cb-cell {
+            border: 1px solid rgba(148,163,184,0.36);
+            border-radius: 7px;
+            height: 37px;
+            position: relative;
+            transition: background 220ms ease, transform 220ms ease;
+          }
+          .cb-cell::after {
+            bottom: 4px;
+            color: rgba(15,23,42,0.78);
+            content: attr(data-mark);
+            font-size: 0.64rem;
+            font-weight: 850;
+            left: 0;
+            position: absolute;
+            right: 0;
+            text-align: center;
+          }
+          .cb-legend { color: #64748b; display: flex; flex-wrap: wrap; font-size: 0.76rem; gap: 14px; padding: 0 18px 18px; }
+          .cb-legend span { align-items: center; display: inline-flex; gap: 6px; }
+          .cb-dot { border-radius: 50%; display: inline-block; height: 9px; width: 9px; }
+          .cb-dot--signal { background: #22a06b; }
+          .cb-dot--noise { background: #e45555; }
+          .cb-dot--anchor { background: #94a3b8; }
+          @media (max-width: 620px) {
+            .cb-top { grid-template-columns: 1fr; }
+            .cb-metric { padding: 8px; }
+            .cb-metric__value { font-size: 1.05rem; }
+            .cb-metric__note { font-size: 0.7rem; }
+          }
+        </style>
+        <section aria-label="Circuit Breaker Challenge">
+          <div class="cb-top">
+            <div class="cb-controls">
+              <div class="cb-field">
+                <label for="cb-sink">Heads routed to the anchor <span class="cb-value" data-role="sink-value"></span></label>
+                <input id="cb-sink" data-role="sink" type="range" min="0" max="100" step="5" value="35">
+              </div>
+              <div class="cb-field">
+                <label for="cb-depth">Transformer depth <span class="cb-value" data-role="depth-value"></span></label>
+                <input id="cb-depth" data-role="depth" type="range" min="4" max="24" step="2" value="12">
+              </div>
+              <div class="cb-target">Keep the useful fact moving toward the final query, while containing the red perturbation. The best setting is neither all mixing nor all no-op routing.</div>
+            </div>
+            <div class="cb-metrics" aria-live="polite">
+              <div class="cb-metric"><div class="cb-metric__label">Identity separation</div><div class="cb-metric__value" data-role="identity"></div><div class="cb-metric__note">higher resists collapse</div></div>
+              <div class="cb-metric"><div class="cb-metric__label">Fact at query</div><div class="cb-metric__value" data-role="fact"></div><div class="cb-metric__note">enough mixing is required</div></div>
+              <div class="cb-metric"><div class="cb-metric__label">Perturbation spill</div><div class="cb-metric__value" data-role="noise"></div><div class="cb-metric__note">lower is safer</div></div>
+            </div>
+          </div>
+          <div class="cb-status" data-role="status"></div>
+          <div class="cb-grid-wrap">
+            <div class="cb-grid" data-role="grid" role="img" aria-label="Token states sampled across Transformer depth"></div>
+          </div>
+          <div class="cb-legend"><span><i class="cb-dot cb-dot--signal"></i>useful signal</span><span><i class="cb-dot cb-dot--noise"></i>perturbation</span><span><i class="cb-dot cb-dot--anchor"></i>low-information anchor</span></div>
+        </section>
+        <script>
+          (() => {
+            const root = document.getElementById("circuit-breaker-challenge");
+            if (!root) return;
+            const els = {
+              sink: root.querySelector('[data-role="sink"]'),
+              depth: root.querySelector('[data-role="depth"]'),
+              sinkValue: root.querySelector('[data-role="sink-value"]'),
+              depthValue: root.querySelector('[data-role="depth-value"]'),
+              identity: root.querySelector('[data-role="identity"]'),
+              fact: root.querySelector('[data-role="fact"]'),
+              noise: root.querySelector('[data-role="noise"]'),
+              status: root.querySelector('[data-role="status"]'),
+              grid: root.querySelector('[data-role="grid"]'),
+            };
+            const tokens = [
+              { label: "⌂  anchor", kind: "anchor" },
+              { label: "✓  useful fact", kind: "fact" },
+              { label: "✦  edited word", kind: "perturb" },
+              { label: "·  distractor A", kind: "distractor" },
+              { label: "·  distractor B", kind: "distractor" },
+              { label: "?  final query", kind: "query" },
+            ];
+            const clamp = (value) => Math.max(0, Math.min(1, value));
+            const pct = (value) => `${Math.round(value * 100)}%`;
+            function model() {
+              const sink = Number(els.sink.value) / 100;
+              const depth = Number(els.depth.value);
+              const mix = 1 - sink;
+              const pressure = clamp(mix * depth / 18);
+              const identity = clamp(1 - 0.78 * pressure + 0.12 * sink);
+              const rawFact = 1 - Math.exp(-0.31 * mix * depth);
+              const noise = clamp(0.9 * pressure);
+              const fact = clamp(rawFact * (1 - 0.54 * noise));
+              const safe = identity >= 0.62 && fact >= 0.5 && noise <= 0.52;
+              const sealed = fact < 0.5 && sink >= 0.6;
+              return { sink, depth, mix, identity, fact, noise, safe, sealed };
+            }
+            function tokenState(kind, progress, values) {
+              if (kind === "anchor") return { signal: 0.02, noise: 0.02 };
+              if (kind === "fact") return { signal: clamp(1 - 0.24 * values.noise * progress), noise: 0.14 * values.noise * progress };
+              if (kind === "perturb") return { signal: 0.08 * progress, noise: clamp(0.95 - 0.35 * values.sink * progress) };
+              if (kind === "query") return { signal: values.fact * Math.pow(progress, 1.45), noise: values.noise * Math.pow(progress, 1.18) };
+              return { signal: 0.23 * values.fact * progress, noise: 0.64 * values.noise * progress };
+            }
+            function cellColor(state) {
+              const green = Math.round(42 + 118 * state.signal);
+              const red = Math.round(44 + 178 * state.noise);
+              const blue = Math.round(72 + 96 * (1 - Math.max(state.signal, state.noise)));
+              const left = `rgba(34, ${green}, 107, ${0.16 + 0.66 * state.signal})`;
+              const right = `rgba(${red}, 72, ${blue}, ${0.12 + 0.64 * state.noise})`;
+              return `linear-gradient(135deg, ${left}, ${right})`;
+            }
+            function mark(state) {
+              if (state.signal > state.noise && state.signal > 0.2) return "signal";
+              if (state.noise > state.signal && state.noise > 0.2) return "spill";
+              return "quiet";
+            }
+            function renderGrid(values) {
+              const marks = Array.from({ length: 7 }, (_, index) => Math.round(index * values.depth / 6));
+              const head = `<div class="cb-grid__head"><span>token state</span>${marks.map((layer) => `<span>L${layer}</span>`).join("")}</div>`;
+              const rows = tokens.map((token) => {
+                const cells = marks.map((layer) => {
+                  const state = tokenState(token.kind, layer / values.depth, values);
+                  const label = `${token.label}, layer ${layer}: useful signal ${pct(state.signal)}, perturbation ${pct(state.noise)}`;
+                  return `<div class="cb-cell" data-mark="${mark(state)}" style="background:${cellColor(state)}" aria-label="${label}" role="img"></div>`;
+                }).join("");
+                return `<div class="cb-row"><div class="cb-token">${token.label}</div>${cells}</div>`;
+              }).join("");
+              els.grid.innerHTML = head + rows;
+            }
+            function render() {
+              const values = model();
+              els.sinkValue.textContent = pct(values.sink);
+              els.depthValue.textContent = `${values.depth} layers`;
+              els.identity.textContent = pct(values.identity);
+              els.fact.textContent = pct(values.fact);
+              els.noise.textContent = pct(values.noise);
+              if (values.safe) {
+                els.status.innerHTML = "<strong>Balanced circuit.</strong> Some heads can park attention at the anchor, reducing spill while leaving enough content routing for the fact to reach the query.";
+              } else if (values.sealed) {
+                els.status.innerHTML = "<strong>Too many circuit breakers.</strong> The perturbation is contained, but so is the useful fact: the final query receives too little information.";
+              } else {
+                els.status.innerHTML = "<strong>Over-mixing.</strong> Too much content routing lets the red perturbation spread through the sequence and erodes token identity.";
+              }
+              renderGrid(values);
+            }
+            els.sink.addEventListener("input", render);
+            els.depth.addEventListener("input", render);
+            render();
+          })();
+        </script>
+      </div>
+    </body>
+    </html>
+    """
+
+    mo.vstack(
+        [
+            mo.md(
+                """
+                ## 1. The Circuit Breaker Challenge
+
+                A useful early fact must reach the final query, while a local
+                perturbation should not flood every token. Choose how many heads
+                take the low-information anchor route and find the regime that
+                preserves both signal and separation.
+
+                This is a deterministic mechanism game, not a live-model result.
+                It makes the paper's trade-off concrete before we inspect actual
+                attention heads below.
+                """
+            ),
+            mo.Html(
+                f"""
+                <iframe
+                  title="Circuit Breaker Challenge"
+                  srcdoc="{html_lib.escape(circuit_breaker_html, quote=True)}"
+                  style="border:0;display:block;height:660px;width:100%;"
+                ></iframe>
+                """
+            ),
+        ],
+        gap=0.7,
+    )
     return
 
 
