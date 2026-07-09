@@ -974,16 +974,22 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
             return torch.float32
         return torch.float16
 
-    @lru_cache(maxsize=1)
-    def load_model_bundle(model_id, precision_key="fp16", hf_token=None):
+    def release_model_memory():
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except (AttributeError, RuntimeError):
+                pass
+
+    def _load_model_bundle_uncached(model_id, precision_key="fp16", hf_token=None):
         if dependency_error is not None:
             return None, None, None, None, dependency_error
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         try:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            release_model_memory()
 
             _auth_kwargs = {"token": hf_token} if hf_token else {}
 
@@ -1007,14 +1013,24 @@ def _(AutoModelForCausalLM, AutoTokenizer, dependency_error, gc, torch):
 
             model.to(device)
             model.eval()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            release_model_memory()
             _dtype_name = str(next(model.parameters()).dtype)
             return tokenizer, model, device, _dtype_name, None
         except Exception as exc:  # noqa: BLE001 - show model load failures in UI.
             return None, None, None, None, exc
 
-    return (load_model_bundle,)
+    @lru_cache(maxsize=1)
+    def load_model_bundle(model_id, precision_key="fp16", hf_token=None):
+        return _load_model_bundle_uncached(model_id, precision_key, hf_token)
+
+    def load_ephemeral_model_bundle(model_id, precision_key="fp16", hf_token=None):
+        return _load_model_bundle_uncached(model_id, precision_key, hf_token)
+
+    def clear_cached_model_bundle():
+        load_model_bundle.cache_clear()
+        release_model_memory()
+
+    return clear_cached_model_bundle, load_ephemeral_model_bundle, load_model_bundle, release_model_memory
 
 
 @app.cell(hide_code=True)
@@ -2198,6 +2214,15 @@ def _(
                 require Hugging Face access in the cloud runtime.
                 """
             ),
+            mo.md(
+                """
+                The sweep path loads models ephemerally: after a model's rows are
+                computed, it is moved off GPU, local references are deleted, and
+                CUDA cache is cleared before the next model. For the cleanest
+                memory profile, attach the GPU and run this section from a fresh
+                cloud runtime.
+                """
+            ).callout(kind="info"),
             mo.hstack([comparison_run_mode, comparison_token_budget], widths="equal", gap=1),
             comparison_model_view,
             comparison_run_button,
@@ -2230,35 +2255,42 @@ def _(
     def measure_anchor_effect(
         model_id,
         base_prompt,
-        load_model_bundle,
+        load_ephemeral_model_bundle,
+        release_model_memory,
         precision_key,
         hf_token,
         torch,
         max_length,
         sink_threshold,
     ):
-        _tokenizer, _model, _device, _model_dtype, _model_error = load_model_bundle(
-            model_id,
-            precision_key,
-            hf_token,
-        )
-        if _model_error is not None or _model is None:
-            return [
-                {
-                    "model": model_id,
-                    "dtype": _model_dtype,
-                    "condition": "load failed",
-                    "tokens": None,
-                    "sink_rate_percent": None,
-                    "mean_sink_strength": None,
-                    "last_token_attention_to_token_0": None,
-                    "final_layer_drift": None,
-                    "error": str(_model_error),
-                }
-            ]
-
-        _comparison_rows = []
+        _tokenizer = None
+        _model = None
+        _device = None
+        _model_dtype = None
         try:
+            _tokenizer, _model, _device, _model_dtype, _model_error = (
+                load_ephemeral_model_bundle(
+                    model_id,
+                    precision_key,
+                    hf_token,
+                )
+            )
+            if _model_error is not None or _model is None:
+                return [
+                    {
+                        "model": model_id,
+                        "dtype": _model_dtype,
+                        "condition": "load failed",
+                        "tokens": None,
+                        "sink_rate_percent": None,
+                        "mean_sink_strength": None,
+                        "last_token_attention_to_token_0": None,
+                        "final_layer_drift": None,
+                        "error": str(_model_error),
+                    }
+                ]
+
+            _comparison_rows = []
             for _condition, _anchor_name in [
                 ("with model first-token anchor", "Use model special token at first position"),
                 ("plain prompt", "Plain prompt only"),
@@ -2309,6 +2341,7 @@ def _(
                         "error": "",
                     }
                 )
+            return _comparison_rows
         except Exception as exc:  # noqa: BLE001 - surface cloud runtime failures.
             return [
                 {
@@ -2323,91 +2356,116 @@ def _(
                     "error": str(exc),
                 }
             ]
-
-        return _comparison_rows
+        finally:
+            if _model is not None:
+                try:
+                    _model.to("cpu")
+                except Exception:
+                    pass
+            del _model
+            del _tokenizer
+            release_model_memory()
 
     def measure_context_sweep(
         model_id,
         base_prompt,
         budgets,
-        load_model_bundle,
+        load_ephemeral_model_bundle,
+        release_model_memory,
         precision_key,
         hf_token,
         torch,
         sink_threshold,
     ):
-        _tokenizer, _model, _device, _model_dtype, _model_error = load_model_bundle(
-            model_id,
-            precision_key,
-            hf_token,
-        )
-        if _model_error is not None or _model is None:
-            return [
-                {
-                    "model": model_id,
-                    "dtype": _model_dtype,
-                    "max_tokens": None,
-                    "actual_tokens": None,
-                    "sink_rate_percent": None,
-                    "mean_sink_strength": None,
-                    "last_token_attention_to_token_0": None,
-                    "error": str(_model_error),
-                }
-            ]
-
-        _long_prompt = build_long_context_prompt(base_prompt, target_sections=96)
-        _anchored_text, _anchor_note = anchored_prompt(
-            _long_prompt,
-            "Use model special token at first position",
-            _tokenizer,
-        )
-        _context_rows = []
-        for _budget in budgets:
-            try:
-                _probe = run_attention_probe(
-                    _anchored_text,
-                    _model,
-                    _tokenizer,
-                    _device,
-                    torch,
-                    _budget,
-                    top_k=4,
+        _tokenizer = None
+        _model = None
+        _device = None
+        _model_dtype = None
+        try:
+            _tokenizer, _model, _device, _model_dtype, _model_error = (
+                load_ephemeral_model_bundle(
+                    model_id,
+                    precision_key,
+                    hf_token,
                 )
-                _sink_summary = summarize_attention_sink(_probe, torch, sink_threshold)
-                _context_rows.append(
+            )
+            if _model_error is not None or _model is None:
+                return [
                     {
                         "model": model_id,
                         "dtype": _model_dtype,
-                        "max_tokens": int(_budget),
-                        "actual_tokens": _sink_summary["token_count"],
-                        "sink_rate_percent": _sink_summary["sink_rate_percent"],
-                        "mean_sink_strength": _sink_summary["mean_sink_strength"],
-                        "last_token_attention_to_token_0": _sink_summary[
-                            "last_token_attention_to_token_0"
-                        ],
-                        "error": "",
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001 - keep partial sweep results.
-                _context_rows.append(
-                    {
-                        "model": model_id,
-                        "dtype": _model_dtype,
-                        "max_tokens": int(_budget),
+                        "max_tokens": None,
                         "actual_tokens": None,
                         "sink_rate_percent": None,
                         "mean_sink_strength": None,
                         "last_token_attention_to_token_0": None,
-                        "error": str(exc),
+                        "error": str(_model_error),
                     }
-                )
-        return _context_rows
+                ]
+
+            _long_prompt = build_long_context_prompt(base_prompt, target_sections=96)
+            _anchored_text, _anchor_note = anchored_prompt(
+                _long_prompt,
+                "Use model special token at first position",
+                _tokenizer,
+            )
+            _context_rows = []
+            for _budget in budgets:
+                try:
+                    _probe = run_attention_probe(
+                        _anchored_text,
+                        _model,
+                        _tokenizer,
+                        _device,
+                        torch,
+                        _budget,
+                        top_k=4,
+                    )
+                    _sink_summary = summarize_attention_sink(_probe, torch, sink_threshold)
+                    _context_rows.append(
+                        {
+                            "model": model_id,
+                            "dtype": _model_dtype,
+                            "max_tokens": int(_budget),
+                            "actual_tokens": _sink_summary["token_count"],
+                            "sink_rate_percent": _sink_summary["sink_rate_percent"],
+                            "mean_sink_strength": _sink_summary["mean_sink_strength"],
+                            "last_token_attention_to_token_0": _sink_summary[
+                                "last_token_attention_to_token_0"
+                            ],
+                            "error": "",
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep partial sweep results.
+                    _context_rows.append(
+                        {
+                            "model": model_id,
+                            "dtype": _model_dtype,
+                            "max_tokens": int(_budget),
+                            "actual_tokens": None,
+                            "sink_rate_percent": None,
+                            "mean_sink_strength": None,
+                            "last_token_attention_to_token_0": None,
+                            "error": str(exc),
+                        }
+                    )
+            return _context_rows
+        finally:
+            if _model is not None:
+                try:
+                    _model.to("cpu")
+                except Exception:
+                    pass
+            del _model
+            del _tokenizer
+            release_model_memory()
 
     return measure_anchor_effect, measure_context_sweep
 
 
 @app.cell(hide_code=True)
 def _(
+    clear_cached_model_bundle,
     DEFAULT_SWEEP_MODELS,
     MODEL_OPTIONS,
     TOKEN_BUDGET_OPTIONS,
@@ -2417,10 +2475,11 @@ def _(
     comparison_run_mode,
     comparison_token_budget,
     hf_token,
-    load_model_bundle,
+    load_ephemeral_model_bundle,
     measure_anchor_effect,
     pd,
     probe_config,
+    release_model_memory,
     selected_precision_key,
     selected_prompt,
     sink_threshold,
@@ -2433,6 +2492,7 @@ def _(
     ):
         comparison_table = None
     else:
+        clear_cached_model_bundle()
         _comparison_rows = []
         _sweep_prompt = probe_config.prompt if probe_config is not None else selected_prompt
         _comparison_token_budget = int(TOKEN_BUDGET_OPTIONS[comparison_token_budget.value])
@@ -2452,7 +2512,8 @@ def _(
                 measure_anchor_effect(
                     _model_id,
                     _sweep_prompt,
-                    load_model_bundle,
+                    load_ephemeral_model_bundle,
+                    release_model_memory,
                     selected_precision_key,
                     hf_token,
                     torch,
@@ -2461,6 +2522,7 @@ def _(
                 )
             )
         comparison_table = pd.DataFrame(_comparison_rows)
+        clear_cached_model_bundle()
     return (comparison_table,)
 
 
@@ -2495,15 +2557,17 @@ def _(comparison_table, mo):
 
 @app.cell(hide_code=True)
 def _(
+    clear_cached_model_bundle,
     CONTEXT_SWEEP_BUDGETS,
     MODEL_OPTIONS,
     context_sweep_button,
     context_sweep_model,
     hf_token,
-    load_model_bundle,
+    load_ephemeral_model_bundle,
     measure_context_sweep,
     pd,
     probe_config,
+    release_model_memory,
     selected_precision_key,
     selected_prompt,
     sink_threshold,
@@ -2512,6 +2576,7 @@ def _(
     if not context_sweep_button.value or pd is None:
         context_sweep_table = None
     else:
+        clear_cached_model_bundle()
         _context_model_id = MODEL_OPTIONS[context_sweep_model.value]
         _context_prompt = probe_config.prompt if probe_config is not None else selected_prompt
         context_sweep_table = pd.DataFrame(
@@ -2519,13 +2584,15 @@ def _(
                 _context_model_id,
                 _context_prompt,
                 CONTEXT_SWEEP_BUDGETS,
-                load_model_bundle,
+                load_ephemeral_model_bundle,
+                release_model_memory,
                 selected_precision_key,
                 hf_token,
                 torch,
                 sink_threshold.value,
             )
         )
+        clear_cached_model_bundle()
     return (context_sweep_table,)
 
 
