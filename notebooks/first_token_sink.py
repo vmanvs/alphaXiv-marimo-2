@@ -765,7 +765,7 @@ def _(
         step=0.05,
         value=0.30,
         show_value=True,
-        label="Strong-sink threshold",
+        label="Attention-sink threshold",
         full_width=True,
     )
 
@@ -1314,21 +1314,50 @@ def _(clean_token, decode_token):
 def _():
     def summarize_attention_sink(probe, torch, sink_threshold):
         _attention = probe["attention"]
-        if _attention.shape[-1] <= 1:
-            _sink_scores = torch.zeros(_attention.shape[0], _attention.shape[1])
-        else:
-            _sink_scores = _attention[:, :, 1:, 0].mean(dim=-1)
+        _token_count = _attention.shape[-1]
+        _opportunities = torch.arange(
+            _token_count,
+            0,
+            -1,
+            dtype=_attention.dtype,
+            device=_attention.device,
+        )
+        _position_scores = (_attention / _opportunities.view(1, 1, 1, _token_count)).sum(
+            dim=-2
+        )
+        _sink_scores = _position_scores[:, :, 0]
+        _position_sink_rates = (
+            (_position_scores > float(sink_threshold)).float().mean(dim=(0, 1)) * 100.0
+        )
         _strong_sink_rate = float(
             (_sink_scores > float(sink_threshold)).float().mean().item() * 100.0
         )
         _mean_sink_strength = float(_sink_scores.mean().item())
         _last_token_sink = float(_attention[:, :, -1, 0].mean().item())
+        _position_rank = int(
+            (torch.argsort(_position_sink_rates, descending=True) == 0)
+            .nonzero(as_tuple=False)[0]
+            .item()
+            + 1
+        )
+        if _token_count > 1:
+            _other_rates = _position_sink_rates[1:]
+            _next_position = int(torch.argmax(_other_rates).item() + 1)
+            _next_rate = float(_position_sink_rates[_next_position].item())
+        else:
+            _next_position = 0
+            _next_rate = float(_position_sink_rates[0].item())
         return {
             "token_count": len(probe["tokens"]),
             "sink_scores": _sink_scores,
+            "position_scores": _position_scores,
+            "position_sink_rates": _position_sink_rates,
             "sink_rate_percent": _strong_sink_rate,
             "mean_sink_strength": _mean_sink_strength,
             "last_token_attention_to_token_0": _last_token_sink,
+            "token0_position_rank": _position_rank,
+            "next_strongest_position": _next_position,
+            "next_strongest_position_rate_percent": _next_rate,
         }
 
     def hidden_drift_summary(base_probe, perturbed_probe, torch):
@@ -1450,12 +1479,12 @@ def _(pd, probe, sink_threshold, summarize_attention_sink, torch):
                     {
                         "layer": _layer,
                         "head": _head,
-                        "mean_attention_to_first_token": float(sink_scores[_layer, _head]),
+                        "token0_sink_score": float(sink_scores[_layer, _head]),
                         "strong_sink": bool(_strong_sink_mask[_layer, _head]),
                     }
                 )
         sink_table = pd.DataFrame(_rows).sort_values(
-            "mean_attention_to_first_token",
+            "token0_sink_score",
             ascending=False,
         )
     return sink_rate, sink_scores, sink_summary, sink_table
@@ -1464,38 +1493,54 @@ def _(pd, probe, sink_threshold, summarize_attention_sink, torch):
 @app.cell(hide_code=True)
 def _(
     mo,
+    plot_position_sink_profile,
     probe,
     selected_head_index,
     selected_layer_index,
     sink_rate,
     sink_scores,
+    sink_summary,
     sink_threshold,
 ):
-    if probe is None or sink_scores is None:
+    if probe is None or sink_scores is None or sink_summary is None:
         _sink_metric_output = mo.md("Sink metrics are waiting for a successful model probe.")
     else:
         _layer = min(int(selected_layer_index), sink_scores.shape[0] - 1)
         _head = min(int(selected_head_index), sink_scores.shape[1] - 1)
         _selected_sink = float(sink_scores[_layer, _head])
         _last_token_sink = float(probe["attention"][_layer, _head, -1, 0])
+        _next_position = int(sink_summary["next_strongest_position"])
+        _next_token = probe["tokens"][_next_position][:22]
+        _position_profile_fig = plot_position_sink_profile(sink_summary, probe["tokens"])
 
-        _sink_metric_output = mo.md(
-            f"""
-            ## 5. Sink metric
+        _sink_metric_output = mo.vstack(
+            [
+                mo.md(
+                    f"""
+                    ## 5. Sink metric
 
-            The paper measures how many heads strongly attend to the first token.
-            This notebook uses the same operational idea: a head is marked as a
-            strong sink if its average attention to token 0 is above the selected
-            threshold.
+                    This notebook now uses the Attention-Sink repository's
+                    opportunity-normalized metric. For each key position, we sum
+                    the attention it receives and divide by how many causal query
+                    positions could have attended to it. A layer/head is marked
+                    as a token-0 sink when that normalized score exceeds the
+                    selected threshold.
 
-            | Metric | Value |
-            | --- | ---: |
-            | Strong-sink threshold | {float(sink_threshold.value):.2f} |
-            | Whole-model sink rate | {sink_rate:.1f}% |
-            | Selected layer/head | L{_layer} H{_head} |
-            | Selected head mean attention to token 0 | {_selected_sink:.3f} |
-            | Last-token attention to token 0 in selected head | {_last_token_sink:.3f} |
-            """
+                    | Metric | Value |
+                    | --- | ---: |
+                    | Attention-sink threshold | {float(sink_threshold.value):.2f} |
+                    | Token-0 sink rate across layer/head pairs | {sink_rate:.1f}% |
+                    | Token-0 rank among positions | {sink_summary["token0_position_rank"]} |
+                    | Next strongest position | {_next_position}: `{_next_token}` |
+                    | Next strongest position sink rate | {sink_summary["next_strongest_position_rate_percent"]:.1f}% |
+                    | Selected layer/head | L{_layer} H{_head} |
+                    | Selected head token-0 sink score | {_selected_sink:.3f} |
+                    | Last-token raw attention to token 0 in selected head | {_last_token_sink:.3f} |
+                    """
+                ),
+                _position_profile_fig,
+            ],
+            gap=0.75,
         )
     _sink_metric_output
     return
@@ -1626,7 +1671,7 @@ def _(go, np):
                 colorscale=SINK_COLORSCALE,
                 zmin=0.0,
                 zmax=max(0.75, float(np.nanmax(data))),
-                colorbar={"title": "mean attention to token 0", "thickness": 12},
+                colorbar={"title": "token-0 sink score", "thickness": 12},
                 hovertemplate="%{customdata}<br>score=%{z:.4f}<extra></extra>",
             )
         )
@@ -1648,13 +1693,50 @@ def _(go, np):
                 )
             )
         fig.update_layout(
-            title="Mean attention to token 0 by layer and head",
+            title="Opportunity-normalized token-0 sink score by layer and head",
             height=max(360, min(760, 26 * layer_count)),
             margin={"l": 56, "r": 16, "t": 52, "b": 50},
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
             xaxis={"title": "Head", "dtick": 1},
             yaxis={"title": "Layer", "dtick": 1, "autorange": "reversed"},
+        )
+        return fig
+
+    def plot_position_sink_profile(sink_summary, tokens):
+        rates = sink_summary["position_sink_rates"].numpy()
+        token_count = len(tokens)
+        positions = np.arange(token_count)
+        labels = [f"{position}: {tokens[position][:18]}" for position in positions]
+        colors = [YELLOW if position == 0 else BLUE for position in positions]
+        hover = [
+            f"position {position}<br>token: {tokens[position]}<br>sink rate: {rates[position]:.2f}%"
+            for position in positions
+        ]
+        fig = go.Figure(
+            data=go.Bar(
+                x=positions,
+                y=rates,
+                marker={"color": colors},
+                customdata=hover,
+                hovertemplate="%{customdata}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="Attention-sink rate by key position",
+            height=330,
+            margin={"l": 56, "r": 16, "t": 52, "b": 92},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={
+                "title": "Key position",
+                "tickmode": "array",
+                "tickvals": positions[:: max(1, int(np.ceil(token_count / 28)))],
+                "ticktext": labels[:: max(1, int(np.ceil(token_count / 28)))],
+                "tickangle": -45,
+            },
+            yaxis={"title": "Layer/head pairs above threshold (%)", "range": [0, 100]},
+            showlegend=False,
         )
         return fig
 
@@ -1752,6 +1834,7 @@ def _(go, np):
         plot_attention_matrix,
         plot_hidden_delta,
         plot_next_token_distribution,
+        plot_position_sink_profile,
         plot_sink_map,
         plot_streaming_cache_bars,
     )
@@ -1778,7 +1861,7 @@ def _(
         _layer = min(int(selected_layer_index), probe["attention"].shape[0] - 1)
         _head = min(int(selected_head_index), probe["attention"].shape[1] - 1)
         _score_line = (
-            f"The selected head sends a mean {selected_head_score:.3f} of its attention to token 0."
+            f"The selected head has a normalized token-0 sink score of {selected_head_score:.3f}."
             if selected_head_score is not None
             else "The selected head is ready for inspection."
         )
@@ -1893,8 +1976,9 @@ def _(mo, plot_sink_map, sink_scores, sink_threshold):
                     """
                     ## 9. Sink atlas
 
-                    Each tile is one layer/head pair. White rings mark heads
-                    above the selected strong-sink threshold.
+                    Each tile is one layer/head pair. The color is the
+                    opportunity-normalized token-0 sink score, and white rings
+                    mark heads above the selected threshold.
                     """
                 ),
                 sink_map_fig,
@@ -2285,6 +2369,9 @@ def _(
                         "sink_rate_percent": None,
                         "mean_sink_strength": None,
                         "last_token_attention_to_token_0": None,
+                        "token0_position_rank": None,
+                        "next_strongest_position": None,
+                        "next_strongest_position_rate_percent": None,
                         "final_layer_drift": None,
                         "error": str(_model_error),
                     }
@@ -2337,6 +2424,11 @@ def _(
                         "last_token_attention_to_token_0": _sink_summary[
                             "last_token_attention_to_token_0"
                         ],
+                        "token0_position_rank": _sink_summary["token0_position_rank"],
+                        "next_strongest_position": _sink_summary["next_strongest_position"],
+                        "next_strongest_position_rate_percent": _sink_summary[
+                            "next_strongest_position_rate_percent"
+                        ],
                         "final_layer_drift": _drift_summary["final_layer_mean_drift"],
                         "error": "",
                     }
@@ -2352,6 +2444,9 @@ def _(
                     "sink_rate_percent": None,
                     "mean_sink_strength": None,
                     "last_token_attention_to_token_0": None,
+                    "token0_position_rank": None,
+                    "next_strongest_position": None,
+                    "next_strongest_position_rate_percent": None,
                     "final_layer_drift": None,
                     "error": str(exc),
                 }
@@ -2399,6 +2494,9 @@ def _(
                         "sink_rate_percent": None,
                         "mean_sink_strength": None,
                         "last_token_attention_to_token_0": None,
+                        "token0_position_rank": None,
+                        "next_strongest_position": None,
+                        "next_strongest_position_rate_percent": None,
                         "error": str(_model_error),
                     }
                 ]
@@ -2433,6 +2531,13 @@ def _(
                             "last_token_attention_to_token_0": _sink_summary[
                                 "last_token_attention_to_token_0"
                             ],
+                            "token0_position_rank": _sink_summary["token0_position_rank"],
+                            "next_strongest_position": _sink_summary[
+                                "next_strongest_position"
+                            ],
+                            "next_strongest_position_rate_percent": _sink_summary[
+                                "next_strongest_position_rate_percent"
+                            ],
                             "error": "",
                         }
                     )
@@ -2446,6 +2551,9 @@ def _(
                             "sink_rate_percent": None,
                             "mean_sink_strength": None,
                             "last_token_attention_to_token_0": None,
+                            "token0_position_rank": None,
+                            "next_strongest_position": None,
+                            "next_strongest_position_rate_percent": None,
                             "error": str(exc),
                         }
                     )
