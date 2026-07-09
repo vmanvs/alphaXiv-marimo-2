@@ -314,6 +314,49 @@ def _():
         "LLaMA 3.1 8B auth required",
     ]
 
+    NEUTRAL_BENCHMARK_PROMPTS = [
+        (
+            "Cardiac tissue repair after myocardial infarction depends on a carefully timed immune response. "
+            "Early inflammatory cells clear damaged tissue and release signals that attract additional repair pathways. "
+            "If that response lasts too long, oxidative stress and fibrosis can weaken ventricular function."
+        ),
+        (
+            "Soil samples collected near a non-ferrous metal smelter contained elevated concentrations of cadmium, "
+            "lead, and zinc. Isotope ratios suggested that ore processing, road transport, and local background geology "
+            "all contributed to the observed contamination pattern."
+        ),
+        (
+            "A pilot hospital ward introduced alcohol hand rub dispensers beside patient beds to encourage hand hygiene. "
+            "Staff training, product placement, and infection-rate monitoring were used to evaluate whether bedside access "
+            "changed daily disinfection behavior."
+        ),
+        (
+            "Visual recognition remains stable even when objects change position, lighting, or scale. Neuroscience studies "
+            "suggest that invariant recognition is supported by hierarchical representations that preserve category-relevant "
+            "structure while discarding many accidental image details."
+        ),
+        (
+            "The court reviewed whether an eyewitness identification should have been excluded after the witness recognized "
+            "the defendant in the courtroom. The opinion distinguished reliability concerns from admissibility and emphasized "
+            "the role of cross-examination and fact-finder judgment."
+        ),
+        (
+            "A synthesis route produced several ruthenium polypyridyl complexes with measurable anticancer activity in cell culture. "
+            "Follow-up assays examined DNA binding, mitochondrial membrane potential, reactive oxygen species, and apoptosis markers "
+            "to characterize the mechanism."
+        ),
+        (
+            "Pharmacokinetic measurements after oral omeprazole administration showed low systemic exposure in llamas. Plasma samples "
+            "were collected across multiple time points, and the estimated absorption profile suggested that higher doses did not "
+            "substantially improve bioavailability."
+        ),
+        (
+            "Studies of host genetic susceptibility to bacterial carriage combine epidemiological sampling with variant-level analysis. "
+            "Because colonization depends on immune response, microbial strain differences, and environment, association signals are often "
+            "modest and require careful interpretation."
+        ),
+    ]
+
     PRECISION_OPTIONS = {
         "fp16 on CUDA, fp32 on CPU": "fp16",
         "bf16 on CUDA, fp32 on CPU": "bf16",
@@ -362,6 +405,7 @@ def _():
         CONTEXT_SWEEP_BUDGETS,
         DEFAULT_SWEEP_MODELS,
         MODEL_OPTIONS,
+        NEUTRAL_BENCHMARK_PROMPTS,
         PAPER_URL,
         PRECISION_OPTIONS,
         PROMPT_PRESETS,
@@ -2225,6 +2269,15 @@ def _(CONTEXT_SWEEP_BUDGETS, DEFAULT_SWEEP_MODELS, MODEL_OPTIONS, TOKEN_BUDGET_O
         label="Sweep token budget",
         full_width=True,
     )
+    comparison_prompt_set = mo.ui.dropdown(
+        options=[
+            "Neutral document mini-benchmark",
+            "Current selected prompt",
+        ],
+        value="Neutral document mini-benchmark",
+        label="Prompt evaluation set",
+        full_width=True,
+    )
     comparison_run_button = mo.ui.run_button(
         label="Run model-family sweep",
         kind="success",
@@ -2245,6 +2298,7 @@ def _(CONTEXT_SWEEP_BUDGETS, DEFAULT_SWEEP_MODELS, MODEL_OPTIONS, TOKEN_BUDGET_O
     return (
         comparison_model_a,
         comparison_model_b,
+        comparison_prompt_set,
         comparison_run_button,
         comparison_run_mode,
         comparison_token_budget,
@@ -2258,6 +2312,7 @@ def _(
     DEFAULT_SWEEP_MODELS,
     comparison_model_a,
     comparison_model_b,
+    comparison_prompt_set,
     comparison_run_button,
     comparison_run_mode,
     comparison_token_budget,
@@ -2296,6 +2351,10 @@ def _(
                 Qwen models are open defaults. Gemma and LLaMA entries are included
                 because they match the paper's evidence more closely, but they may
                 require Hugging Face access in the cloud runtime.
+
+                By default this section evaluates a neutral mini-benchmark of
+                document prefixes instead of the reader-facing prompt above. That
+                makes the scale check less dependent on hand-authored wording.
                 """
             ),
             mo.md(
@@ -2307,7 +2366,11 @@ def _(
                 cloud runtime.
                 """
             ).callout(kind="info"),
-            mo.hstack([comparison_run_mode, comparison_token_budget], widths="equal", gap=1),
+            mo.hstack(
+                [comparison_run_mode, comparison_token_budget, comparison_prompt_set],
+                widths="equal",
+                gap=1,
+            ),
             comparison_model_view,
             comparison_run_button,
             mo.md(
@@ -2461,6 +2524,63 @@ def _(
             del _tokenizer
             release_model_memory()
 
+    def summarize_prompt_benchmark(rows, pd):
+        if not rows:
+            return []
+
+        _table = pd.DataFrame(rows)
+        if "error" not in _table.columns:
+            _table["error"] = ""
+
+        _summary_rows = []
+        _group_columns = ["model", "dtype", "condition"]
+        for _group_values, _group in _table.groupby(_group_columns, dropna=False):
+            _row = dict(zip(_group_columns, _group_values))
+            _errors = [
+                str(_error)
+                for _error in _group.get("error", [])
+                if isinstance(_error, str) and _error.strip()
+            ]
+            _valid = _group[_group["error"].fillna("") == ""]
+            _row["prompt_count"] = int(len(_group))
+            _row["valid_prompt_count"] = int(len(_valid))
+            if len(_valid) == 0:
+                _row.update(
+                    {
+                        "tokens": None,
+                        "sink_rate_percent": None,
+                        "mean_sink_strength": None,
+                        "last_token_attention_to_token_0": None,
+                        "token0_position_rank": None,
+                        "next_strongest_position": None,
+                        "next_strongest_position_rate_percent": None,
+                        "final_layer_drift": None,
+                        "error": "; ".join(_errors),
+                    }
+                )
+            else:
+                _row.update(
+                    {
+                        "tokens": float(_valid["tokens"].mean()),
+                        "sink_rate_percent": float(_valid["sink_rate_percent"].mean()),
+                        "mean_sink_strength": float(_valid["mean_sink_strength"].mean()),
+                        "last_token_attention_to_token_0": float(
+                            _valid["last_token_attention_to_token_0"].mean()
+                        ),
+                        "token0_position_rank": float(_valid["token0_position_rank"].mean()),
+                        "next_strongest_position": float(
+                            _valid["next_strongest_position"].mean()
+                        ),
+                        "next_strongest_position_rate_percent": float(
+                            _valid["next_strongest_position_rate_percent"].mean()
+                        ),
+                        "final_layer_drift": float(_valid["final_layer_drift"].mean()),
+                        "error": "; ".join(_errors),
+                    }
+                )
+            _summary_rows.append(_row)
+        return _summary_rows
+
     def measure_context_sweep(
         model_id,
         base_prompt,
@@ -2568,7 +2688,7 @@ def _(
             del _tokenizer
             release_model_memory()
 
-    return measure_anchor_effect, measure_context_sweep
+    return measure_anchor_effect, measure_context_sweep, summarize_prompt_benchmark
 
 
 @app.cell(hide_code=True)
@@ -2576,9 +2696,11 @@ def _(
     clear_cached_model_bundle,
     DEFAULT_SWEEP_MODELS,
     MODEL_OPTIONS,
+    NEUTRAL_BENCHMARK_PROMPTS,
     TOKEN_BUDGET_OPTIONS,
     comparison_model_a,
     comparison_model_b,
+    comparison_prompt_set,
     comparison_run_button,
     comparison_run_mode,
     comparison_token_budget,
@@ -2591,6 +2713,7 @@ def _(
     selected_precision_key,
     selected_prompt,
     sink_threshold,
+    summarize_prompt_benchmark,
     torch,
 ):
     if (
@@ -2602,7 +2725,11 @@ def _(
     else:
         clear_cached_model_bundle()
         _comparison_rows = []
-        _sweep_prompt = probe_config.prompt if probe_config is not None else selected_prompt
+        _selected_prompt = probe_config.prompt if probe_config is not None else selected_prompt
+        if comparison_prompt_set.value == "Neutral document mini-benchmark":
+            _sweep_prompts = list(NEUTRAL_BENCHMARK_PROMPTS)
+        else:
+            _sweep_prompts = [_selected_prompt]
         _comparison_token_budget = int(TOKEN_BUDGET_OPTIONS[comparison_token_budget.value])
         if comparison_run_mode.value == "Run RTX family sweep":
             _comparison_labels = DEFAULT_SWEEP_MODELS
@@ -2616,8 +2743,9 @@ def _(
                 _comparison_model_ids.append(_model_id)
 
         for _model_id in _comparison_model_ids:
-            _comparison_rows.extend(
-                measure_anchor_effect(
+            _model_prompt_rows = []
+            for _prompt_index, _sweep_prompt in enumerate(_sweep_prompts):
+                _rows = measure_anchor_effect(
                     _model_id,
                     _sweep_prompt,
                     load_ephemeral_model_bundle,
@@ -2628,7 +2756,14 @@ def _(
                     _comparison_token_budget,
                     sink_threshold.value,
                 )
-            )
+                for _row in _rows:
+                    _row["prompt_set"] = comparison_prompt_set.value
+                    _row["prompt_index"] = _prompt_index
+                    _model_prompt_rows.append(_row)
+            if comparison_prompt_set.value == "Neutral document mini-benchmark":
+                _comparison_rows.extend(summarize_prompt_benchmark(_model_prompt_rows, pd))
+            else:
+                _comparison_rows.extend(_model_prompt_rows)
         comparison_table = pd.DataFrame(_comparison_rows)
         clear_cached_model_bundle()
     return (comparison_table,)
@@ -2640,8 +2775,9 @@ def _(comparison_table, mo):
         _comparison_output = mo.md(
             """
             The model-family sweep is skipped by default because it can load
-            multiple large models. Choose a sweep mode and click the run button
-            in molab after attaching the RTX Pro 6000.
+            multiple large models. By default it averages the sink metric across
+            a neutral mini-benchmark of document prefixes. Choose a sweep mode
+            and click the run button in molab after attaching the RTX Pro 6000.
             """
         ).callout(kind="info")
     else:
@@ -2652,7 +2788,8 @@ def _(comparison_table, mo):
                     The most persuasive result is not a single large number. It
                     is the pattern: adding a first-position anchor should increase
                     sink behavior and often reduce how much a local perturbation
-                    spreads into the final layer.
+                    spreads into the final layer. With the neutral mini-benchmark,
+                    each row is averaged across document-style prompt prefixes.
                     """
                 ),
                 comparison_table,
