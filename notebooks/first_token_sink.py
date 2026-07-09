@@ -314,11 +314,6 @@ def _():
         "LLaMA 3.1 8B auth required",
     ]
 
-    EXECUTION_MODES = [
-        "Cloud GPU single model",
-        "Cloud GPU sweep",
-    ]
-
     PRECISION_OPTIONS = {
         "fp16 on CUDA, fp32 on CPU": "fp16",
         "bf16 on CUDA, fp32 on CPU": "bf16",
@@ -366,7 +361,6 @@ def _():
         ANCHOR_MODES,
         CONTEXT_SWEEP_BUDGETS,
         DEFAULT_SWEEP_MODELS,
-        EXECUTION_MODES,
         MODEL_OPTIONS,
         PAPER_URL,
         PRECISION_OPTIONS,
@@ -721,19 +715,12 @@ def _(
 @app.cell(hide_code=True)
 def _(
     ANCHOR_MODES,
-    EXECUTION_MODES,
     MODEL_OPTIONS,
     PRECISION_OPTIONS,
     PROMPT_PRESETS,
     TOKEN_BUDGET_OPTIONS,
     mo,
 ):
-    execution_mode = mo.ui.dropdown(
-        options=EXECUTION_MODES,
-        value="Cloud GPU single model",
-        label="Execution mode",
-        full_width=True,
-    )
     model_choice = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
         value="Qwen2.5 7B open",
@@ -785,7 +772,14 @@ def _(
     mo.vstack(
         [
             mo.md("## 2. Choose the probe"),
-            mo.hstack([execution_mode, model_choice], widths="equal", gap=1),
+            mo.md(
+                """
+                Start with one model so the circuit is easy to inspect. The
+                broader RTX family and long-context sweeps come later, after the
+                sink behavior is visible in a single prompt.
+                """
+            ).callout(kind="info"),
+            model_choice,
             mo.hstack([precision_choice, anchor_mode], widths="equal", gap=1),
             mo.hstack([prompt_preset, max_tokens, sink_threshold], widths="equal", gap=1),
             custom_prompt,
@@ -795,7 +789,6 @@ def _(
     return (
         anchor_mode,
         custom_prompt,
-        execution_mode,
         max_tokens,
         model_choice,
         precision_choice,
@@ -818,7 +811,6 @@ def _(
     SimpleNamespace,
     TOKEN_BUDGET_OPTIONS,
     anchor_mode,
-    execution_mode,
     max_tokens,
     model_choice,
     precision_choice,
@@ -827,7 +819,6 @@ def _(
     sink_threshold,
 ):
     current_probe_config = SimpleNamespace(
-        execution_mode=execution_mode.value,
         model_label=model_choice.value,
         model_id=MODEL_OPTIONS[model_choice.value],
         precision_label=precision_choice.value,
@@ -2195,7 +2186,7 @@ def _(
         [
             mo.md(
                 """
-                ## 13. Cloud GPU exploration
+                ## 13. Does the circuit breaker scale?
 
                 The single-model probe proves the mechanics. The molab path is
                 where we test the paper-shaped claim at a more serious scale:
@@ -2599,7 +2590,7 @@ def _(mo):
     2. The paper's explanation: the sink can act as an approximate no-op.
     3. A reproduction: perturbation spreads more when the first-token anchor is absent.
     4. A streaming diagnostic: keeping token 0 can preserve otherwise dropped attention mass.
-    5. A cloud GPU exploration: test Qwen, Gemma, and LLaMA-style families.
+    5. A scale check: test Qwen, Gemma, and LLaMA-style families on a cloud GPU.
     6. A practical takeaway: attention sinks matter for long context, streaming,
        quantization, and robustness.
 
