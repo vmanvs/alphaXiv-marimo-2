@@ -442,6 +442,12 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
 
 @app.cell(hide_code=True)
 def _(mo):
+    collapse_guess = mo.ui.dropdown(
+        options=["Collapse", "Survives"],
+        value="Survives",
+        label="Your prediction",
+        full_width=True,
+    )
     escape_valve = mo.ui.slider(
         start=0.0,
         stop=0.95,
@@ -458,6 +464,11 @@ def _(mo):
         value=24,
         show_value=True,
         label="Network depth",
+        full_width=True,
+    )
+    reveal_collapse_button = mo.ui.run_button(
+        label="Reveal chamber outcome",
+        kind="success",
         full_width=True,
     )
     mo.vstack(
@@ -479,11 +490,19 @@ def _(mo):
                 paper assigns to sink-like heads.
                 """
             ),
-            mo.hstack([escape_valve, chamber_depth], widths="equal", gap=1),
+            mo.md(
+                """
+                **Tiny prediction game.** Before revealing the curves, choose
+                whether this setup will collapse token identities or keep them
+                distinguishable.
+                """
+            ).callout(kind="info"),
+            mo.hstack([collapse_guess, escape_valve, chamber_depth], widths="equal", gap=1),
+            reveal_collapse_button,
         ],
         gap=1,
     )
-    return chamber_depth, escape_valve
+    return chamber_depth, collapse_guess, escape_valve, reveal_collapse_button
 
 
 @app.cell(hide_code=True)
@@ -693,11 +712,13 @@ def _(go, np):
 @app.cell(hide_code=True)
 def _(
     chamber_depth,
+    collapse_guess,
     escape_valve,
     go,
     mo,
     np,
     plot_mixing_chamber_curves,
+    reveal_collapse_button,
     simulate_mixing_chamber,
     token_identity_strip,
 ):
@@ -705,6 +726,14 @@ def _(
         mixing_chamber_output = mo.md(
             "The mixing chamber needs NumPy and Plotly to render."
         ).callout(kind="warn")
+    elif not reveal_collapse_button.value:
+        mixing_chamber_output = mo.md(
+            """
+            The chamber is sealed. Make a prediction above, then click
+            **Reveal chamber outcome** to see whether repeated mixing collapses
+            token identities.
+            """
+        ).callout(kind="info")
     else:
         _mixing_chamber_result = simulate_mixing_chamber(
             depth=int(chamber_depth.value),
@@ -721,6 +750,16 @@ def _(
         else:
             _verdict = "identities preserved"
             _kind = "success"
+        _prediction = "rank collapse" if collapse_guess.value == "Collapse" else "identities preserved"
+        _prediction_hit = (
+            (_prediction == "rank collapse" and _verdict == "rank collapse")
+            or (_prediction == "identities preserved" and _verdict != "rank collapse")
+        )
+        _prediction_line = (
+            "Your prediction held up."
+            if _prediction_hit
+            else "The chamber disagreed with your prediction."
+        )
         mixing_chamber_output = mo.vstack(
             [
                 mo.hstack(
@@ -737,11 +776,13 @@ def _(
                             | Final normalized effective rank | {_final_rank:.3f} |
                             | Final mean token similarity | {_final_similarity:.3f} |
                             | State | **{_verdict}** |
+                            | Prediction | {collapse_guess.value} |
 
-                            Low escape-valve settings force tokens to keep mixing,
-                            so rank falls and pairwise similarity rises. Opening
-                            the valve slows the collapse by letting some layers
-                            behave closer to the paper's approximate no-op.
+                            {_prediction_line} Low escape-valve settings force
+                            tokens to keep mixing, so rank falls and pairwise
+                            similarity rises. Opening the valve slows the
+                            collapse by letting some layers behave closer to the
+                            paper's approximate no-op.
                             """
                         ).callout(kind=_kind),
                     ],
@@ -1741,6 +1782,171 @@ def _(go, np):
         )
         return fig
 
+    def build_sink_switch_counterfactual(matrix, tokens):
+        _original = np.nan_to_num(
+            np.asarray(matrix, dtype=float),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        _counterfactual = _original.copy()
+        if _counterfactual.shape[1] == 0:
+            _counterfactual = _original
+            _token0_mass = np.zeros(_original.shape[0])
+        else:
+            _token0_mass = _counterfactual[:, 0].copy()
+            _counterfactual[:, 0] = 0.0
+            _row_sums = _counterfactual.sum(axis=1, keepdims=True)
+            _counterfactual = np.divide(
+                _counterfactual,
+                _row_sums,
+                out=np.zeros_like(_counterfactual),
+                where=_row_sums > 1e-12,
+            )
+
+        def _routing_entropy(_matrix):
+            _scores = []
+            for _row_index, _row in enumerate(_matrix):
+                _visible = np.clip(_row[: _row_index + 1], 0.0, None)
+                _total = float(_visible.sum())
+                if _total <= 1e-12 or len(_visible) <= 1:
+                    continue
+                _probabilities = _visible / _total
+                _entropy = -float(
+                    (_probabilities * np.log(_probabilities + 1e-12)).sum()
+                )
+                _scores.append(_entropy / max(float(np.log(len(_visible))), 1e-12))
+            return float(np.mean(_scores)) if _scores else 0.0
+
+        _gain = _counterfactual - _original
+        _mean_gain = _gain.mean(axis=0) if _gain.size else np.asarray([])
+        if len(_mean_gain) > 1:
+            _recipient = int(np.argmax(_mean_gain[1:]) + 1)
+        else:
+            _recipient = 0
+        _recipient_token = tokens[_recipient] if tokens and _recipient < len(tokens) else ""
+        return {
+            "original": _original,
+            "counterfactual": _counterfactual,
+            "mean_gain": _mean_gain,
+            "mean_token0_mass": float(_token0_mass[1:].mean()) if len(_token0_mass) > 1 else float(_token0_mass.mean()) if len(_token0_mass) else 0.0,
+            "original_mixing_score": _routing_entropy(_original),
+            "counterfactual_mixing_score": _routing_entropy(_counterfactual),
+            "top_recipient_position": _recipient,
+            "top_recipient_token": _recipient_token,
+        }
+
+    def plot_sink_switch_lens(switch_result, tokens, layer, head):
+        from plotly.subplots import make_subplots
+
+        _original = switch_result["original"]
+        _counterfactual = switch_result["counterfactual"]
+        _token_count = len(tokens)
+        _tick_positions, _tick_labels = _sampled_token_ticks(tokens)
+        _zmax = max(
+            0.05,
+            float(np.nanmax(_original)) if _original.size else 0.0,
+            float(np.nanmax(_counterfactual)) if _counterfactual.size else 0.0,
+        )
+        _fig = make_subplots(
+            rows=1,
+            cols=2,
+            subplot_titles=[
+                "Actual selected head",
+                "Counterfactual: token 0 unavailable",
+            ],
+            horizontal_spacing=0.10,
+        )
+        _fig.add_trace(
+            go.Heatmap(
+                z=_original,
+                x=list(range(_token_count)),
+                y=list(range(_token_count)),
+                colorscale=SINK_COLORSCALE,
+                zmin=0.0,
+                zmax=_zmax,
+                colorbar={"title": "attention", "thickness": 12},
+                hovertemplate="query=%{y}<br>key=%{x}<br>attention=%{z:.4f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        _fig.add_trace(
+            go.Heatmap(
+                z=_counterfactual,
+                x=list(range(_token_count)),
+                y=list(range(_token_count)),
+                colorscale=SINK_COLORSCALE,
+                zmin=0.0,
+                zmax=_zmax,
+                showscale=False,
+                hovertemplate="query=%{y}<br>key=%{x}<br>counterfactual=%{z:.4f}<extra></extra>",
+            ),
+            row=1,
+            col=2,
+        )
+        _fig.update_layout(
+            title=f"Sink Switch lens: layer {layer}, head {head}",
+            height=max(430, min(680, 18 * _token_count)),
+            margin={"l": 54, "r": 18, "t": 74, "b": 86},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+        )
+        _fig.update_xaxes(
+            title="Key token",
+            tickmode="array",
+            tickvals=_tick_positions,
+            ticktext=_tick_labels,
+            tickangle=-45,
+        )
+        _fig.update_yaxes(
+            title="Query token",
+            tickmode="array",
+            tickvals=_tick_positions,
+            ticktext=_tick_labels,
+            autorange="reversed",
+        )
+        return _fig
+
+    def plot_sink_switch_gain(switch_result, tokens, top_k=10):
+        _gain = np.nan_to_num(
+            np.asarray(switch_result["mean_gain"], dtype=float),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        if len(_gain) <= 1:
+            _positions = np.asarray([0])
+        else:
+            _candidate_positions = np.arange(1, len(_gain))
+            _top_count = min(int(top_k), len(_candidate_positions))
+            _positions = _candidate_positions[
+                np.argsort(_gain[1:])[-_top_count:]
+            ]
+            _positions = _positions[np.argsort(_gain[_positions])]
+        _labels = [f"{int(_position)}: {tokens[int(_position)][:22]}" for _position in _positions]
+        _values = _gain[_positions] if len(_gain) else np.asarray([0.0])
+        _fig = go.Figure(
+            data=go.Bar(
+                x=_values,
+                y=_labels,
+                orientation="h",
+                marker={"color": GREEN},
+                hovertemplate="key=%{y}<br>mean gained attention=%{x:.4f}<extra></extra>",
+            )
+        )
+        _fig.update_layout(
+            title="Where token-0 attention is forced to go",
+            height=max(300, 30 * len(_labels)),
+            margin={"l": 136, "r": 16, "t": 52, "b": 46},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={"title": "Mean gained attention"},
+            yaxis={"title": ""},
+            showlegend=False,
+        )
+        return _fig
+
     def plot_attention_flow(probe, layer, head, query_index, top_k=12):
         attention_row = np.nan_to_num(
             probe["attention"][layer, head, query_index].numpy(),
@@ -1983,11 +2189,14 @@ def _(go, np):
         return fig
 
     return (
+        build_sink_switch_counterfactual,
         plot_attention_flow,
         plot_attention_matrix,
         plot_hidden_delta,
         plot_next_token_distribution,
         plot_position_sink_profile,
+        plot_sink_switch_gain,
+        plot_sink_switch_lens,
         plot_sink_map,
         plot_streaming_cache_bars,
     )
@@ -2042,6 +2251,110 @@ def _(
         )
 
     selected_attention_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, probe):
+    if probe is None:
+        sink_switch_control = None
+        _sink_switch_control_view = mo.md(
+            """
+            ## 6b. The Sink Switch
+
+            The Sink Switch appears after a successful attention probe. It is a
+            truthful counterfactual lens over the selected head, not a modified
+            model forward pass.
+            """
+        ).callout(kind="info")
+    else:
+        sink_switch_control = mo.ui.checkbox(
+            value=False,
+            label="Flip the Sink Switch: make token 0 unavailable in this selected head",
+        )
+        _sink_switch_control_view = mo.vstack(
+            [
+                mo.md(
+                    """
+                    ## 6b. The Sink Switch
+
+                    Flip the switch to ask a narrow counterfactual question:
+                    **if this one head could not route attention to token 0,
+                    where would that attention mass go?**
+
+                    This does not rerun or patch the model. It suppresses key
+                    position 0 in the selected head's returned attention matrix
+                    and renormalizes each query row over the remaining visible
+                    keys. That makes it fast, portable, and honest.
+                    """
+                ),
+                sink_switch_control,
+            ],
+            gap=0.75,
+        )
+    _sink_switch_control_view
+    return (sink_switch_control,)
+
+
+@app.cell(hide_code=True)
+def _(
+    build_sink_switch_counterfactual,
+    mo,
+    plot_sink_switch_gain,
+    plot_sink_switch_lens,
+    probe,
+    selected_head_index,
+    selected_layer_index,
+    sink_switch_control,
+):
+    if probe is None or sink_switch_control is None:
+        sink_switch_output = None
+    else:
+        _layer = min(int(selected_layer_index), probe["attention"].shape[0] - 1)
+        _head = min(int(selected_head_index), probe["attention"].shape[1] - 1)
+        _selected_matrix = probe["attention"][_layer, _head].numpy()
+        _switch_result = build_sink_switch_counterfactual(
+            _selected_matrix,
+            probe["tokens"],
+        )
+        if not sink_switch_control.value:
+            sink_switch_output = mo.md(
+                f"""
+                Switch off. In the actual selected head, query tokens send an
+                average of **{_switch_result["mean_token0_mass"]:.3f}**
+                attention mass to token 0. Flip the switch to see the
+                counterfactual redistribution.
+                """
+            ).callout(kind="info")
+        else:
+            _recipient_position = int(_switch_result["top_recipient_position"])
+            _recipient_token = _switch_result["top_recipient_token"][:24]
+            sink_switch_output = mo.vstack(
+                [
+                    plot_sink_switch_lens(_switch_result, probe["tokens"], _layer, _head),
+                    mo.md(
+                        f"""
+                        **Counterfactual readout**
+
+                        | Signal | Value |
+                        | --- | ---: |
+                        | Actual mean attention to token 0 | {_switch_result["mean_token0_mass"]:.3f} |
+                        | Actual mixing score | {_switch_result["original_mixing_score"]:.3f} |
+                        | Counterfactual mixing score | {_switch_result["counterfactual_mixing_score"]:.3f} |
+                        | Largest recipient after switch | {_recipient_position}: `{_recipient_token}` |
+
+                        The right panel is not a new model run. It is a lens
+                        over one selected head: token 0 is made unavailable,
+                        and each query row is renormalized over the remaining
+                        keys. If token 0 was absorbing no-op routing mass, the
+                        switch forces that mass onto content tokens.
+                        """
+                    ).callout(kind="success"),
+                    plot_sink_switch_gain(_switch_result, probe["tokens"]),
+                ],
+                gap=0.75,
+            )
+    sink_switch_output
     return
 
 
