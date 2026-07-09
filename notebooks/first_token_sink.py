@@ -1090,7 +1090,7 @@ def _(
 ):
     model_choice = mo.ui.dropdown(
         options=list(MODEL_OPTIONS.keys()),
-        value="Qwen2.5 7B open",
+        value="LLaMA 3.1 8B (Hugging Face token required)",
         label="Model",
         full_width=True,
     )
@@ -3596,6 +3596,12 @@ def _(
         return ["reported attention layer" for _ in range(layer_count)]
 
     def dense_moe_layer_breakdown(sink_summary, layer_kinds, torch, sink_threshold):
+        def _dense_moe_finite_mean(tensor, fallback=0.0):
+            _finite_values = tensor[torch.isfinite(tensor)]
+            if _finite_values.numel() == 0:
+                return float(fallback)
+            return float(_finite_values.mean().item())
+
         _sink_scores = sink_summary["sink_scores"]
         _layer_count = int(_sink_scores.shape[0])
         if not layer_kinds or len(layer_kinds) != _layer_count:
@@ -3612,7 +3618,7 @@ def _(
                 "sink_rate_percent": float(
                     (_subset > float(sink_threshold)).float().mean().item() * 100.0
                 ),
-                "mean_sink_strength": _finite_mean(_subset, torch),
+                "mean_sink_strength": _dense_moe_finite_mean(_subset),
             }
 
         _rows = []
