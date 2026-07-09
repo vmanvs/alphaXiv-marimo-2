@@ -1157,7 +1157,7 @@ def _(device, mo, model, model_dtype, model_error, probe_config, probe_run_reque
 
 
 @app.cell(hide_code=True)
-def _(mo, probe, sink_scores):
+def _(mo, probe, sink_scores, torch):
     layer_index_control = None
     head_index_control = None
     strongest_layer = None
@@ -1176,7 +1176,13 @@ def _(mo, probe, sink_scores):
         ).callout(kind="info")
     else:
         _layer_count, _head_count = sink_scores.shape
-        strongest_flat_index = int(sink_scores.flatten().argmax().item())
+        _finite_sink_mask = torch.isfinite(sink_scores)
+        if bool(_finite_sink_mask.any()):
+            _safe_sink_scores = sink_scores.clone()
+            _safe_sink_scores[~_finite_sink_mask] = -float("inf")
+            strongest_flat_index = int(_safe_sink_scores.flatten().argmax().item())
+        else:
+            strongest_flat_index = 0
         strongest_layer = int(strongest_flat_index // _head_count)
         strongest_head = int(strongest_flat_index % _head_count)
         strongest_score = float(sink_scores[strongest_layer, strongest_head])
@@ -1207,7 +1213,7 @@ def _(mo, probe, sink_scores):
                     ## 3. Pick a head to inspect
 
                     Preselected **L{strongest_layer} H{strongest_head}** because
-                    it has the highest first-token sink score in this run
+                    it has the highest finite first-token sink score in this run
                     ({strongest_score:.3f}). Use the controls to audit any other
                     layer/head pair.
                     """
@@ -1228,7 +1234,7 @@ def _(mo, probe, sink_scores):
 
 
 @app.cell(hide_code=True)
-def _(head_index_control, layer_index_control, sink_scores):
+def _(head_index_control, layer_index_control, sink_scores, torch):
     if sink_scores is None or layer_index_control is None or head_index_control is None:
         selected_layer_index = 0
         selected_head_index = 0
@@ -1237,7 +1243,8 @@ def _(head_index_control, layer_index_control, sink_scores):
         _layer_count, _head_count = sink_scores.shape
         selected_layer_index = min(int(layer_index_control.value), _layer_count - 1)
         selected_head_index = min(int(head_index_control.value), _head_count - 1)
-        selected_head_score = float(sink_scores[selected_layer_index, selected_head_index])
+        _score = sink_scores[selected_layer_index, selected_head_index]
+        selected_head_score = float(_score) if bool(torch.isfinite(_score)) else None
 
     return selected_head_index, selected_head_score, selected_layer_index
 
@@ -1333,15 +1340,32 @@ def _(clean_token, decode_token):
         )
 
         logits = outputs.logits[0, -1].detach().float().cpu()
-        probs = torch.softmax(logits, dim=-1)
-        top_probs, top_ids = torch.topk(probs, k=top_k)
-        next_tokens = [
-            {
-                "token": decode_token(tokenizer, token_id),
-                "probability": float(probability),
-            }
-            for token_id, probability in zip(top_ids, top_probs)
-        ]
+        diagnostics = {
+            "attention_nonfinite": int((~torch.isfinite(attention)).sum().item()),
+            "hidden_nonfinite": int((~torch.isfinite(hidden)).sum().item()),
+            "logits_nonfinite": int((~torch.isfinite(logits)).sum().item()),
+            "attention_values": int(attention.numel()),
+            "hidden_values": int(hidden.numel()),
+            "logits_values": int(logits.numel()),
+        }
+
+        finite_logits = torch.isfinite(logits)
+        if finite_logits.any():
+            safe_logits = logits.clone()
+            replacement = logits[finite_logits].min() - 50.0
+            safe_logits = torch.where(finite_logits, safe_logits, replacement)
+            probs = torch.softmax(safe_logits, dim=-1)
+            probs = torch.nan_to_num(probs, nan=0.0, posinf=0.0, neginf=0.0)
+            top_probs, top_ids = torch.topk(probs, k=min(int(top_k), probs.numel()))
+            next_tokens = [
+                {
+                    "token": decode_token(tokenizer, token_id),
+                    "probability": float(probability),
+                }
+                for token_id, probability in zip(top_ids, top_probs)
+            ]
+        else:
+            next_tokens = []
 
         return {
             "text": text,
@@ -1349,6 +1373,7 @@ def _(clean_token, decode_token):
             "attention": attention,
             "hidden": hidden,
             "next_tokens": next_tokens,
+            "diagnostics": diagnostics,
         }
 
     return (run_attention_probe,)
@@ -1356,8 +1381,21 @@ def _(clean_token, decode_token):
 
 @app.cell(hide_code=True)
 def _():
+    def _finite_mean(tensor, torch, fallback=0.0):
+        finite_values = tensor[torch.isfinite(tensor)]
+        if finite_values.numel() == 0:
+            return float(fallback)
+        return float(finite_values.mean().item())
+
     def summarize_attention_sink(probe, torch, sink_threshold):
-        _attention = probe["attention"]
+        _raw_attention = probe["attention"]
+        _attention = torch.nan_to_num(
+            _raw_attention,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        _nonfinite_attention = int((~torch.isfinite(_raw_attention)).sum().item())
         _token_count = _attention.shape[-1]
         _opportunities = torch.arange(
             _token_count,
@@ -1376,8 +1414,8 @@ def _():
         _strong_sink_rate = float(
             (_sink_scores > float(sink_threshold)).float().mean().item() * 100.0
         )
-        _mean_sink_strength = float(_sink_scores.mean().item())
-        _last_token_sink = float(_attention[:, :, -1, 0].mean().item())
+        _mean_sink_strength = _finite_mean(_sink_scores, torch)
+        _last_token_sink = _finite_mean(_attention[:, :, -1, 0], torch)
         _position_rank = int(
             (torch.argsort(_position_sink_rates, descending=True) == 0)
             .nonzero(as_tuple=False)[0]
@@ -1396,6 +1434,7 @@ def _():
             "sink_scores": _sink_scores,
             "position_scores": _position_scores,
             "position_sink_rates": _position_sink_rates,
+            "nonfinite_attention_count": _nonfinite_attention,
             "sink_rate_percent": _strong_sink_rate,
             "mean_sink_strength": _mean_sink_strength,
             "last_token_attention_to_token_0": _last_token_sink,
@@ -1412,14 +1451,23 @@ def _():
             - perturbed_probe["hidden"][:_layer_count, :_token_count, :],
             dim=-1,
         )
+        _nonfinite_drift = int((~torch.isfinite(_delta)).sum().item())
+        _delta = torch.nan_to_num(_delta, nan=0.0, posinf=0.0, neginf=0.0)
         return {
             "delta": _delta,
-            "early_layer_mean_drift": float(_delta[1].mean().item()) if _delta.shape[0] > 1 else 0.0,
-            "final_layer_mean_drift": float(_delta[-1].mean().item()),
+            "early_layer_mean_drift": _finite_mean(_delta[1], torch) if _delta.shape[0] > 1 else 0.0,
+            "final_layer_mean_drift": _finite_mean(_delta[-1], torch),
+            "nonfinite_drift_count": _nonfinite_drift,
         }
 
     def streaming_cache_diagnostic(probe, cache_window, torch):
-        _attention = probe["attention"]
+        _raw_attention = probe["attention"]
+        _attention = torch.nan_to_num(
+            _raw_attention,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         _token_count = _attention.shape[-1]
         _window = max(1, min(int(cache_window), _token_count))
         _last_query_attention = _attention[:, :, -1, :]
@@ -1438,6 +1486,7 @@ def _():
             "anchor_plus_recent_attention_mass": _anchor_plus_recent_mass,
             "attention_mass_recovered_by_keeping_token_0": _anchor_plus_recent_mass
             - _recent_only_mass,
+            "nonfinite_attention_count": int((~torch.isfinite(_raw_attention)).sum().item()),
         }
 
     return hidden_drift_summary, streaming_cache_diagnostic, summarize_attention_sink
@@ -1545,6 +1594,7 @@ def _(
     sink_scores,
     sink_summary,
     sink_threshold,
+    torch,
 ):
     if probe is None or sink_scores is None or sink_summary is None:
         _sink_metric_output = mo.md("Sink metrics are waiting for a successful model probe.")
@@ -1552,15 +1602,24 @@ def _(
         _layer = min(int(selected_layer_index), sink_scores.shape[0] - 1)
         _head = min(int(selected_head_index), sink_scores.shape[1] - 1)
         _selected_sink = float(sink_scores[_layer, _head])
-        _last_token_sink = float(probe["attention"][_layer, _head, -1, 0])
+        _raw_last_token_sink = probe["attention"][_layer, _head, -1, 0]
+        _last_token_sink = (
+            f"{float(_raw_last_token_sink):.3f}"
+            if bool(torch.isfinite(_raw_last_token_sink))
+            else "non-finite"
+        )
         _next_position = int(sink_summary["next_strongest_position"])
         _next_token = probe["tokens"][_next_position][:22]
         _position_profile_fig = plot_position_sink_profile(sink_summary, probe["tokens"])
+        _diagnostics = probe.get("diagnostics", {})
+        _attention_nonfinite = int(_diagnostics.get("attention_nonfinite", 0))
+        _hidden_nonfinite = int(_diagnostics.get("hidden_nonfinite", 0))
+        _logits_nonfinite = int(_diagnostics.get("logits_nonfinite", 0))
+        _total_nonfinite = _attention_nonfinite + _hidden_nonfinite + _logits_nonfinite
 
-        _sink_metric_output = mo.vstack(
-            [
-                mo.md(
-                    f"""
+        _metric_items = [
+            mo.md(
+                f"""
                     ## 5. Sink metric
 
                     This notebook now uses the Attention-Sink repository's
@@ -1579,11 +1638,26 @@ def _(
                     | Next strongest position sink rate | {sink_summary["next_strongest_position_rate_percent"]:.1f}% |
                     | Selected layer/head | L{_layer} H{_head} |
                     | Selected head token-0 sink score | {_selected_sink:.3f} |
-                    | Last-token raw attention to token 0 in selected head | {_last_token_sink:.3f} |
+                    | Last-token raw attention to token 0 in selected head | {_last_token_sink} |
                     """
-                ),
-                _position_profile_fig,
-            ],
+            )
+        ]
+        if _total_nonfinite > 0:
+            _metric_items.append(
+                mo.md(
+                    f"""
+                    Numerical note: this forward pass emitted non-finite values
+                    (`attention={_attention_nonfinite}`, `hidden={_hidden_nonfinite}`,
+                    `logits={_logits_nonfinite}`). Aggregate sink metrics and plots
+                    replace non-finite attention entries with zero so one unstable
+                    head cannot corrupt the full notebook.
+                    """
+                ).callout(kind="warn")
+            )
+        _metric_items.append(_position_profile_fig)
+
+        _sink_metric_output = mo.vstack(
+            _metric_items,
             gap=0.75,
         )
     _sink_metric_output
@@ -1613,7 +1687,12 @@ def _(go, np):
         return positions, labels
 
     def plot_attention_matrix(matrix, tokens, layer, head):
-        data = np.asarray(matrix)
+        data = np.nan_to_num(
+            np.asarray(matrix, dtype=float),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         token_count = len(tokens)
         tick_positions, tick_labels = _sampled_token_ticks(tokens)
         hover = [
@@ -1663,7 +1742,12 @@ def _(go, np):
         return fig
 
     def plot_attention_flow(probe, layer, head, query_index, top_k=12):
-        attention_row = probe["attention"][layer, head, query_index].numpy()
+        attention_row = np.nan_to_num(
+            probe["attention"][layer, head, query_index].numpy(),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         visible_keys = np.arange(query_index + 1)
         top_count = min(int(top_k), len(visible_keys))
         top_positions = visible_keys[np.argsort(attention_row[: query_index + 1])[-top_count:]]
@@ -1697,7 +1781,12 @@ def _(go, np):
         return fig
 
     def plot_sink_map(sink_scores, threshold):
-        data = sink_scores.numpy()
+        data = np.nan_to_num(
+            sink_scores.numpy(),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         layer_count, head_count = data.shape
         hover = [
             [
@@ -1748,7 +1837,12 @@ def _(go, np):
         return fig
 
     def plot_position_sink_profile(sink_summary, tokens):
-        rates = sink_summary["position_sink_rates"].numpy()
+        rates = np.nan_to_num(
+            sink_summary["position_sink_rates"].numpy(),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         token_count = len(tokens)
         positions = np.arange(token_count)
         labels = [f"{position}: {tokens[position][:18]}" for position in positions]
@@ -1785,7 +1879,12 @@ def _(go, np):
         return fig
 
     def plot_hidden_delta(delta, tokens):
-        data = delta.numpy()
+        data = np.nan_to_num(
+            delta.numpy(),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         tick_positions, tick_labels = _sampled_token_ticks(tokens)
         layer_count, token_count = data.shape
         hover = [
@@ -1825,10 +1924,15 @@ def _(go, np):
 
     def plot_streaming_cache_bars(streaming_cache_summary):
         labels = ["recent-only cache", "token 0 + recent cache"]
-        values = [
-            streaming_cache_summary["recent_only_attention_mass"],
-            streaming_cache_summary["anchor_plus_recent_attention_mass"],
-        ]
+        values = np.nan_to_num(
+            [
+                streaming_cache_summary["recent_only_attention_mass"],
+                streaming_cache_summary["anchor_plus_recent_attention_mass"],
+            ],
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).tolist()
         fig = go.Figure(
             data=go.Bar(
                 x=labels,
@@ -1851,7 +1955,12 @@ def _(go, np):
 
     def plot_next_token_distribution(next_tokens):
         labels = [item["token"] for item in reversed(next_tokens)]
-        values = [item["probability"] for item in reversed(next_tokens)]
+        values = np.nan_to_num(
+            [item["probability"] for item in reversed(next_tokens)],
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        ).tolist()
         fig = go.Figure(
             data=go.Bar(
                 x=values,
@@ -1942,6 +2051,10 @@ def _(mo, plot_next_token_distribution, probe):
         next_token_output = mo.md(
             "Next-token distribution is waiting for a successful model probe."
         ).callout(kind="info")
+    elif not probe.get("next_tokens"):
+        next_token_output = mo.md(
+            "Next-token distribution is unavailable because this forward pass returned no finite logits."
+        ).callout(kind="warn")
     else:
         next_token_output = plot_next_token_distribution(probe["next_tokens"])
     mo.vstack([mo.md("## 7. Next-token distribution"), next_token_output])
@@ -2337,6 +2450,13 @@ def _(
             "Choose **Run selected pair** for a manual comparison, or **Run RTX family sweep** for the fixed cloud benchmark set."
         ).callout(kind="info")
 
+    if comparison_run_mode.value == "Skip cloud sweep":
+        _comparison_run_view = mo.md(
+            "Select a sweep mode above to enable the model-family run button."
+        ).callout(kind="info")
+    else:
+        _comparison_run_view = comparison_run_button
+
     mo.vstack(
         [
             mo.md(
@@ -2372,7 +2492,7 @@ def _(
                 gap=1,
             ),
             comparison_model_view,
-            comparison_run_button,
+            _comparison_run_view,
             mo.md(
                 """
                 ### Longer contexts
@@ -2414,6 +2534,7 @@ def _(
         _model = None
         _device = None
         _model_dtype = None
+        _base_prompts = [base_prompt] if isinstance(base_prompt, str) else list(base_prompt)
         try:
             _tokenizer, _model, _device, _model_dtype, _model_error = (
                 load_ephemeral_model_bundle(
@@ -2436,66 +2557,90 @@ def _(
                         "next_strongest_position": None,
                         "next_strongest_position_rate_percent": None,
                         "final_layer_drift": None,
+                        "prompt_index": None,
                         "error": str(_model_error),
                     }
                 ]
 
             _comparison_rows = []
-            for _condition, _anchor_name in [
-                ("with model first-token anchor", "Use model special token at first position"),
-                ("plain prompt", "Plain prompt only"),
-            ]:
-                _text, _anchor_note = anchored_prompt(base_prompt, _anchor_name, _tokenizer)
-                _perturbed_text = perturb_prompt(_text)
-                _base_probe = run_attention_probe(
-                    _text,
-                    _model,
-                    _tokenizer,
-                    _device,
-                    torch,
-                    max_length,
-                    top_k=4,
-                )
-                _perturbed_probe = run_attention_probe(
-                    _perturbed_text,
-                    _model,
-                    _tokenizer,
-                    _device,
-                    torch,
-                    max_length,
-                    top_k=4,
-                )
-                _sink_summary = summarize_attention_sink(
-                    _base_probe,
-                    torch,
-                    sink_threshold,
-                )
-                _drift_summary = hidden_drift_summary(
-                    _base_probe,
-                    _perturbed_probe,
-                    torch,
-                )
+            for _prompt_index, _base_prompt in enumerate(_base_prompts):
+                for _condition, _anchor_name in [
+                    ("with model first-token anchor", "Use model special token at first position"),
+                    ("plain prompt", "Plain prompt only"),
+                ]:
+                    try:
+                        _text, _anchor_note = anchored_prompt(_base_prompt, _anchor_name, _tokenizer)
+                        _perturbed_text = perturb_prompt(_text)
+                        _base_probe = run_attention_probe(
+                            _text,
+                            _model,
+                            _tokenizer,
+                            _device,
+                            torch,
+                            max_length,
+                            top_k=4,
+                        )
+                        _perturbed_probe = run_attention_probe(
+                            _perturbed_text,
+                            _model,
+                            _tokenizer,
+                            _device,
+                            torch,
+                            max_length,
+                            top_k=4,
+                        )
+                        _sink_summary = summarize_attention_sink(
+                            _base_probe,
+                            torch,
+                            sink_threshold,
+                        )
+                        _drift_summary = hidden_drift_summary(
+                            _base_probe,
+                            _perturbed_probe,
+                            torch,
+                        )
 
-                _comparison_rows.append(
-                    {
-                        "model": model_id,
-                        "dtype": _model_dtype,
-                        "condition": _condition,
-                        "tokens": _sink_summary["token_count"],
-                        "sink_rate_percent": _sink_summary["sink_rate_percent"],
-                        "mean_sink_strength": _sink_summary["mean_sink_strength"],
-                        "last_token_attention_to_token_0": _sink_summary[
-                            "last_token_attention_to_token_0"
-                        ],
-                        "token0_position_rank": _sink_summary["token0_position_rank"],
-                        "next_strongest_position": _sink_summary["next_strongest_position"],
-                        "next_strongest_position_rate_percent": _sink_summary[
-                            "next_strongest_position_rate_percent"
-                        ],
-                        "final_layer_drift": _drift_summary["final_layer_mean_drift"],
-                        "error": "",
-                    }
-                )
+                        _comparison_rows.append(
+                            {
+                                "model": model_id,
+                                "dtype": _model_dtype,
+                                "condition": _condition,
+                                "tokens": _sink_summary["token_count"],
+                                "sink_rate_percent": _sink_summary["sink_rate_percent"],
+                                "mean_sink_strength": _sink_summary["mean_sink_strength"],
+                                "last_token_attention_to_token_0": _sink_summary[
+                                    "last_token_attention_to_token_0"
+                                ],
+                                "token0_position_rank": _sink_summary["token0_position_rank"],
+                                "next_strongest_position": _sink_summary[
+                                    "next_strongest_position"
+                                ],
+                                "next_strongest_position_rate_percent": _sink_summary[
+                                    "next_strongest_position_rate_percent"
+                                ],
+                                "final_layer_drift": _drift_summary["final_layer_mean_drift"],
+                                "prompt_index": _prompt_index,
+                                "error": "",
+                            }
+                        )
+                    except Exception as exc:  # noqa: BLE001 - keep partial benchmark rows.
+                        _comparison_rows.append(
+                            {
+                                "model": model_id,
+                                "dtype": _model_dtype,
+                                "condition": _condition,
+                                "tokens": None,
+                                "sink_rate_percent": None,
+                                "mean_sink_strength": None,
+                                "last_token_attention_to_token_0": None,
+                                "token0_position_rank": None,
+                                "next_strongest_position": None,
+                                "next_strongest_position_rate_percent": None,
+                                "final_layer_drift": None,
+                                "prompt_index": _prompt_index,
+                                "error": str(exc),
+                            }
+                        )
             return _comparison_rows
         except Exception as exc:  # noqa: BLE001 - surface cloud runtime failures.
             return [
@@ -2511,6 +2656,7 @@ def _(
                     "next_strongest_position": None,
                     "next_strongest_position_rate_percent": None,
                     "final_layer_drift": None,
+                    "prompt_index": None,
                     "error": str(exc),
                 }
             ]
@@ -2743,23 +2889,19 @@ def _(
                 _comparison_model_ids.append(_model_id)
 
         for _model_id in _comparison_model_ids:
-            _model_prompt_rows = []
-            for _prompt_index, _sweep_prompt in enumerate(_sweep_prompts):
-                _rows = measure_anchor_effect(
-                    _model_id,
-                    _sweep_prompt,
-                    load_ephemeral_model_bundle,
-                    release_model_memory,
-                    selected_precision_key,
-                    hf_token,
-                    torch,
-                    _comparison_token_budget,
-                    sink_threshold.value,
-                )
-                for _row in _rows:
-                    _row["prompt_set"] = comparison_prompt_set.value
-                    _row["prompt_index"] = _prompt_index
-                    _model_prompt_rows.append(_row)
+            _model_prompt_rows = measure_anchor_effect(
+                _model_id,
+                _sweep_prompts,
+                load_ephemeral_model_bundle,
+                release_model_memory,
+                selected_precision_key,
+                hf_token,
+                torch,
+                _comparison_token_budget,
+                sink_threshold.value,
+            )
+            for _row in _model_prompt_rows:
+                _row["prompt_set"] = comparison_prompt_set.value
             if comparison_prompt_set.value == "Neutral document mini-benchmark":
                 _comparison_rows.extend(summarize_prompt_benchmark(_model_prompt_rows, pd))
             else:
