@@ -473,6 +473,36 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
 
 @app.cell(hide_code=True)
 def _(mo):
+    mo.md(r"""
+    ### A decoder-only attention block in one minute
+
+    For query token (i), head (h) in layer (ell) assigns a causal
+    probability to every earlier key token (j le i):
+
+    [
+    alpha_{ij}^{(ell,h)} =
+    operatorname{softmax}_{j le i}
+    left(\frac{{q_i^{(ell,h)}}^{\top}k_j^{(ell,h)}}{\sqrt{d_h}}\right),
+    qquad
+    z_i^{(ell,h)} =
+    sum_{j le i}\alpha_{ij}^{(ell,h)}W_V^{(ell,h)}v_j^{(ell)}.
+    ]
+
+    The first equation produces the attention map; the second says why it is
+    a **mixing operator**. Every output is a weighted combination of earlier
+    token values. The causal mask makes the matrix lower triangular, so later
+    tokens can read earlier ones but not vice versa.
+
+    High attention therefore need not mean "this token is semantically
+    important." It can also mean "this is where the head routes when it wants
+    to avoid mixing useful content." That is the control-flow interpretation
+    tested throughout this notebook.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     collapse_guess = mo.ui.dropdown(
         options=["Collapse", "Survives"],
         value="Survives",
@@ -1076,6 +1106,64 @@ def _(mo):
         ],
         gap=0.7,
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### What the game is standing in for
+
+    Let (V^{(L)} \in \mathbb{R}^{T \times d}) collect all token
+    representations after (L) layers. A standard measure of **rank collapse**
+    asks whether every row of (V^{(L)}) is becoming close to the sequence
+    average:
+
+    [
+    left\|V^{(L)} - \frac{1}{T}\mathbf{1}\mathbf{1}^{\top}V^{(L)}\right\|_F
+    < \Delta.
+    ]
+
+    The paper proves that this strong condition implies a related
+    representational-collapse condition,
+    (left\|v_T^{(L)}-v_{T-1}^{(L)}\right\|_2 < \Delta), although the
+    converse need not hold. Depth and long context create different routes to
+    the same practical danger: token states become harder to distinguish.
+
+    To study how a local edit spreads, define the sensitivity
+
+    [
+    J_{i\rightarrow j}^{(L)} =
+    \frac{\partial v_j^{(L)}}{\partial v_i^{(0)}}.
+    ]
+
+    In readable form, the paper's multi-head bound says this sensitivity is at
+    most a sum over all causal paths from (i) to (j), with each path weighted
+    by a product of attention coefficients across layers:
+
+    [
+    \left\|J_{i\rightarrow j}^{(L)}\right\|
+    \le C_{\max}^{L}
+    \sum_{\pi:i\rightsquigarrow j}
+    \prod_{\ell=1}^{L}\bar{\alpha}_{\pi_\ell}^{(\ell)}.
+    ]
+
+    A sink removes weight from many content-to-content paths. Appendix B adds
+    the crucial mechanical detail: the beginning token has an unusually
+    low-norm value vector. If a head concentrates on it,
+
+    [
+    z_i^{(ell,h)} \approx W_V^{(ell,h)}v_{\mathrm{bos}}^{(ell)} \approx 0,
+    qquad
+    v_i^{(ell+1)} \approx v_i^{(ell)}
+    ]
+
+    through the residual pathway. That is the paper's approximate no-op. The
+    game models this mechanism; it does not claim that its scores are measured
+    from LLaMA or Gemma.
+
+    _Paper trail: Section 3, Theorem 3.2, and Appendix B._
+    """)
     return
 
 
@@ -1949,6 +2037,39 @@ def _(pd, probe, sink_threshold, summarize_attention_sink, torch):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### How this notebook measures a sink
+
+    For key position (p), layer (ell), and head (h), we average the
+    attention received over exactly the causal queries that had an opportunity
+    to attend to that position:
+
+    [
+    s_{\ell,h}(p) =
+    \frac{1}{T-p}
+    \sum_{i=p}^{T-1}\alpha_{i,p}^{(\ell,h)}.
+    ]
+
+    A head is counted as a token-0 sink when (s_{\ell,h}(0) > \varepsilon).
+    The whole-model rate is
+
+    [
+    R_{\varepsilon} =
+    \frac{1}{LH}
+    \sum_{\ell=1}^{L}\sum_{h=1}^{H}
+    \mathbf{1}\!\left[s_{\ell,h}(0)>\varepsilon\right].
+    ]
+
+    This is the notebook's opportunity-normalized operationalization of the
+    sink metric used in the paper and the Attention-Sink work. The threshold
+    controls classification, not the underlying attention values; use the
+    continuous score and the atlas alongside the headline rate.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(
     mo,
     plot_position_sink_profile,
@@ -1987,12 +2108,9 @@ def _(
                 f"""
                     ### Whole-model sink summary
 
-                    This notebook now uses the Attention-Sink repository's
-                    opportunity-normalized metric. For each key position, we sum
-                    the attention it receives and divide by how many causal query
-                    positions could have attended to it. A layer/head is marked
-                    as a token-0 sink when that normalized score exceeds the
-                    selected threshold.
+                    The equations above define the score used here. The table
+                    reports both the aggregate classification rate and the
+                    continuous evidence needed to audit that classification.
 
                     | Metric | Value |
                     | --- | ---: |
@@ -2886,13 +3004,28 @@ def _(mo):
     mo.vstack(
         [
             mo.md(
-                """
+                r"""
                 ### Practical implication: streaming caches
 
                 A streaming decoder cannot keep every old key/value vector forever.
                 If a recent-only cache drops token 0, how much attention mass does
                 the final token lose compared with a cache that keeps token 0 plus
                 recent tokens?
+
+                For the final query (T-1), the diagnostic reports
+
+                [
+                \Delta_{\mathrm{cache}} =
+                \frac{1}{LH}\sum_{\ell,h}
+                \left(
+                \sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
+                - \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
+                \right),
+                ]
+
+                where (mathcal{R}) is the recent-token window. This measures
+                recovered routing mass, not perplexity or task accuracy; it is a
+                mechanism diagnostic motivated by streaming-attention results.
                 """
             ),
             streaming_cache_window,
@@ -2981,24 +3114,48 @@ def _(
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 4. Does the sink limit perturbation spread?
+
+    Take an original prompt (x) and a controlled variant (x') that differs
+    by one lexical edit. At token (i) and layer (ell), the notebook measures
+
+    [
+    D_i^{(ell)} =
+    \left\|v_i^{(ell)}(x)-v_i^{(ell)}(x')\right\|_2.
+    ]
+
+    A bright cell in the heatmap means that the local edit substantially changed
+    that token representation at that depth. The paper interprets this as an
+    empirical estimate of the Jacobian sensitivity introduced earlier. If a
+    first-position sink removes weight from content-to-content paths, we expect
+    less off-diagonal and late-layer spread—not necessarily zero drift.
+
+    The within-condition heatmap below explains *where* the edit travels. The
+    paired benchmark that follows asks the stronger question: how do sink rate
+    and final-layer drift change with the model's special first-position token
+    versus a plain prompt?
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo, perturbed_prompt):
     if perturbed_prompt is None:
         perturb_prompt_view = mo.md(
             """
-            ## 4. Does the sink limit perturbation spread?
+            ### Current perturbation
 
             Waiting for a successful attention probe.
             """
         ).callout(kind="info")
     else:
         perturb_prompt_view = mo.md(f"""
-        ## 4. Does the sink limit perturbation spread?
+        ### Current perturbation
 
-        The paper uses perturbation experiments to argue that sinks can reduce
-        how strongly information spreads across token positions. This first view
-        changes one word and measures hidden-state drift by layer and token
-        position for the selected condition. The cross-model evidence matrix
-        below runs the paired special-token and plain-prompt conditions.
+        This run changes one word and measures hidden-state drift for the
+        selected condition.
 
         Perturbed prompt:
 
@@ -3187,9 +3344,26 @@ def _(
                 family, Gemma 2 9B is a replication-style extension, and Qwen is
                 an open control for testing model- and scale-dependence.
 
+                The paper's within-family reference is:
+
+                | LLaMA 3.1 | Total attention heads | Reported sink rate |
+                | --- | ---: | ---: |
+                | 8B | 1,024 | 45.97% |
+                | 70B | 5,120 | 73.49% |
+                | 405B | 16,128 | 78.29% |
+
+                Our 8B run can reproduce the model-family phenomenon, but it
+                cannot by itself reproduce this three-size scaling curve.
+
                 By default this section evaluates a neutral mini-benchmark of
                 document prefixes instead of the reader-facing prompt above. That
                 makes the scale check less dependent on hand-authored wording.
+
+                **Important training/inference distinction.** The paper shows
+                that packing strategy determines whether a model learns to use
+                the explicit beginning token or simply the first available
+                position as its sink. Our anchor control changes the inference
+                input only; it does not recreate those pre-training conditions.
                 """
             ),
             mo.md(
@@ -4170,7 +4344,7 @@ def _(
     mo.vstack(
         [
             mo.md(
-                """
+                r"""
                 ## 6. Research extension: Dense vs MoE
 
                 This is the notebook's original research question. If two Gemma
@@ -4182,10 +4356,27 @@ def _(
                 effect is primarily tied to attention and depth; a split profile
                 suggests that sparse MLP routing changes the circuit.
 
+                | Pre-registered interpretation | What we would observe |
+                | --- | --- |
+                | Attention/depth account | Dense and MoE models have similar sink rates and normalized-depth profiles. |
+                | Routing-sensitive account | Their profiles diverge systematically, suggesting sparse MLP routing changes how the attention circuit is used. |
+
                 | Model | Architecture | Parameters | Why this pair is clean |
                 | --- | --- | ---: | --- |
                 | `google/gemma-4-31B-it` | Dense | 30.7B active | Same Gemma 4 family and long-context hybrid attention design. |
                 | `google/gemma-4-26B-A4B-it` | MoE | 25.2B total / 3.8B active | Sparse expert routing changes the MLP path while keeping the attention family comparable. |
+
+                The comparison holds prompt set, precision, token budget, anchor
+                condition, and sink threshold fixed. Because the models have
+                different depths, layers are compared at normalized position
+
+                [
+                \tau_{\ell}=\frac{\ell}{L-1}\in[0,1],
+                ]
+
+                and also grouped into early, middle, and late thirds. This is a
+                controlled architecture comparison, not a causal intervention on
+                expert routing.
                 """
             ),
             mo.md(
