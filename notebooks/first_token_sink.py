@@ -176,163 +176,6 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    sink_playground = r"""
-    <div id="sink-playground" class="sink-playground">
-      <style>
-        #sink-playground {
-          border: 1px solid #d7dde8;
-          border-radius: 8px;
-          background: #fbfdff;
-          padding: 16px;
-          margin: 6px 0 24px;
-          color: #172033;
-        }
-        #sink-playground * { box-sizing: border-box; }
-        #sink-playground .sink-playground-grid {
-          display: grid;
-          grid-template-columns: minmax(0, 0.9fr) minmax(280px, 1.1fr);
-          gap: 18px;
-          align-items: start;
-        }
-        #sink-playground h3 {
-          margin: 0 0 10px;
-          font-size: 1.05rem;
-          line-height: 1.25;
-        }
-        #sink-playground label {
-          display: grid;
-          gap: 5px;
-          margin: 12px 0;
-          font-weight: 700;
-          color: #334155;
-        }
-        #sink-playground input[type="range"] { width: 100%; }
-        #sink-playground .sink-track {
-          position: relative;
-          height: 34px;
-          border-radius: 6px;
-          background: #eef2f7;
-          overflow: hidden;
-          margin: 10px 0;
-          border: 1px solid #dce3ee;
-        }
-        #sink-playground .sink-fill {
-          height: 100%;
-          width: 0%;
-          display: flex;
-          align-items: center;
-          padding-left: 10px;
-          color: #fff;
-          font-weight: 850;
-          font-size: 0.84rem;
-          white-space: nowrap;
-          transition: width 180ms ease;
-        }
-        #sink-playground .sink-zero { background: #16a34a; }
-        #sink-playground .sink-recent { background: #2563eb; }
-        #sink-playground .sink-semantic { background: #ca8a04; }
-        #sink-playground .sink-meter {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 10px;
-          margin-top: 12px;
-        }
-        #sink-playground .sink-metric {
-          border: 1px solid #d7dde8;
-          border-radius: 8px;
-          background: #fff;
-          padding: 10px;
-        }
-        #sink-playground .sink-metric span {
-          display: block;
-          color: #64748b;
-          font-size: 0.74rem;
-          font-weight: 850;
-          text-transform: uppercase;
-          letter-spacing: 0;
-        }
-        #sink-playground .sink-metric strong {
-          display: block;
-          margin-top: 4px;
-          font-size: 1.25rem;
-          color: #111827;
-        }
-        @media (max-width: 760px) {
-          #sink-playground .sink-playground-grid { grid-template-columns: 1fr; }
-          #sink-playground .sink-meter { grid-template-columns: 1fr; }
-        }
-      </style>
-      <div class="sink-playground-grid">
-        <section>
-          <h3>Attention sink intuition</h3>
-          <p style="margin:0;color:#475569;line-height:1.5;">
-            Move the controls before running any model. The point is not to
-            simulate a Transformer exactly; it is to make the mechanism visible.
-            More no-op pressure and longer context make token 0 more attractive.
-          </p>
-          <label>No-op pressure <input data-role="noop" type="range" min="0" max="100" value="58"></label>
-          <label>Semantic pressure <input data-role="semantic" type="range" min="0" max="100" value="42"></label>
-          <label>Context length <input data-role="context" type="range" min="32" max="2048" step="32" value="512"></label>
-        </section>
-        <section>
-          <div class="sink-track"><div class="sink-fill sink-zero" data-role="zero">token 0</div></div>
-          <div class="sink-track"><div class="sink-fill sink-recent" data-role="recent">recent tokens</div></div>
-          <div class="sink-track"><div class="sink-fill sink-semantic" data-role="semantic-bar">semantic tokens</div></div>
-          <div class="sink-meter">
-            <div class="sink-metric"><span>Sink mass</span><strong data-role="sink-mass">0%</strong></div>
-            <div class="sink-metric"><span>Context</span><strong data-role="context-value">512</strong></div>
-            <div class="sink-metric"><span>Interpretation</span><strong data-role="verdict">mixed</strong></div>
-          </div>
-        </section>
-      </div>
-      <script>
-        (() => {
-          const root = document.currentScript.closest("#sink-playground");
-          const noop = root.querySelector("[data-role='noop']");
-          const semantic = root.querySelector("[data-role='semantic']");
-          const context = root.querySelector("[data-role='context']");
-          const zero = root.querySelector("[data-role='zero']");
-          const recent = root.querySelector("[data-role='recent']");
-          const semanticBar = root.querySelector("[data-role='semantic-bar']");
-          const sinkMass = root.querySelector("[data-role='sink-mass']");
-          const contextValue = root.querySelector("[data-role='context-value']");
-          const verdict = root.querySelector("[data-role='verdict']");
-
-          function render() {
-            const noopValue = Number(noop.value) / 100;
-            const semanticValue = Number(semantic.value) / 100;
-            const contextValueRaw = Number(context.value);
-            const contextPressure = Math.log2(contextValueRaw / 32) / Math.log2(2048 / 32);
-            const sink = Math.max(0.04, Math.min(0.88, 0.12 + 0.52 * noopValue + 0.28 * contextPressure - 0.34 * semanticValue));
-            const semanticMass = Math.max(0.06, Math.min(0.78, 0.18 + 0.58 * semanticValue - 0.18 * noopValue));
-            const recentMass = Math.max(0.05, 1 - sink - semanticMass);
-            const total = sink + semanticMass + recentMass;
-            const sinkPct = Math.round((sink / total) * 100);
-            const recentPct = Math.round((recentMass / total) * 100);
-            const semanticPct = Math.round((semanticMass / total) * 100);
-            zero.style.width = `${sinkPct}%`;
-            recent.style.width = `${recentPct}%`;
-            semanticBar.style.width = `${semanticPct}%`;
-            zero.textContent = `token 0 ${sinkPct}%`;
-            recent.textContent = `recent tokens ${recentPct}%`;
-            semanticBar.textContent = `semantic tokens ${semanticPct}%`;
-            sinkMass.textContent = `${sinkPct}%`;
-            contextValue.textContent = contextValueRaw.toLocaleString();
-            verdict.textContent = sinkPct > 45 ? "sink-heavy" : sinkPct > 24 ? "mixed" : "semantic";
-          }
-
-          [noop, semantic, context].forEach((input) => input.addEventListener("input", render));
-          render();
-        })();
-      </script>
-    </div>
-    """
-    mo.Html(sink_playground)
-    return
-
-
-@app.cell(hide_code=True)
 def _():
     dependency_error = None
     np = None
@@ -560,6 +403,322 @@ def _(ALPHAXIV_URL, PAPER_URL, mo):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    escape_valve = mo.ui.slider(
+        start=0.0,
+        stop=0.95,
+        step=0.05,
+        value=0.35,
+        show_value=True,
+        label="Escape valve: no-op / sink fraction",
+        full_width=True,
+    )
+    chamber_depth = mo.ui.slider(
+        start=4,
+        stop=48,
+        step=2,
+        value=24,
+        show_value=True,
+        label="Network depth",
+        full_width=True,
+    )
+    mo.vstack(
+        [
+            mo.md(
+                """
+                ## 1. Why depth needs an escape valve
+
+                Over-mixing, rank collapse, and representational collapse are
+                best read as a causal chain. Repeated attention mixing makes
+                token states less distinguishable; in the strongest linear case
+                this becomes rank collapse, and rank collapse implies
+                representational collapse. The reverse does not have to hold.
+
+                This toy chamber is a faithful simulation of that mechanism, not
+                a decorative animation. Each token starts as a random vector. At
+                each layer it either mixes with the others or keeps part of its
+                current identity through a no-op route, which is the role the
+                paper assigns to sink-like heads.
+                """
+            ),
+            mo.hstack([escape_valve, chamber_depth], widths="equal", gap=1),
+        ],
+        gap=1,
+    )
+    return chamber_depth, escape_valve
+
+
+@app.cell(hide_code=True)
+def _(go, np):
+    def simulate_mixing_chamber(
+        n_tokens=8,
+        dim=16,
+        depth=24,
+        noop_fraction=0.0,
+        temperature=1.0,
+        seed=7,
+    ):
+        _rng = np.random.default_rng(seed)
+        _representations = _rng.normal(size=(n_tokens, dim))
+        _states = [_representations.copy()]
+        _effective_ranks = []
+        _similarities = []
+
+        def _measure(_matrix):
+            _singular_values = np.linalg.svd(_matrix, compute_uv=False)
+            _total = max(float(_singular_values.sum()), 1e-12)
+            _probabilities = _singular_values / _total
+            _effective_rank = float(
+                np.exp(-(_probabilities * np.log(_probabilities + 1e-12)).sum())
+            )
+            _normed = _matrix / np.clip(
+                np.linalg.norm(_matrix, axis=1, keepdims=True),
+                1e-12,
+                None,
+            )
+            _sim_matrix = _normed @ _normed.T
+            _off_diag = _sim_matrix[~np.eye(n_tokens, dtype=bool)]
+            return _effective_rank, float(_off_diag.mean())
+
+        _rank, _similarity = _measure(_representations)
+        _effective_ranks.append(_rank)
+        _similarities.append(_similarity)
+
+        for _ in range(depth):
+            _logits = _rng.normal(size=(n_tokens, n_tokens)) / temperature
+            _attention = np.exp(_logits - _logits.max(axis=1, keepdims=True))
+            _attention /= _attention.sum(axis=1, keepdims=True)
+            _mixed = _attention @ _representations
+            _representations = (
+                (1.0 - noop_fraction) * _mixed
+                + noop_fraction * _representations
+            )
+            _states.append(_representations.copy())
+            _rank, _similarity = _measure(_representations)
+            _effective_ranks.append(_rank)
+            _similarities.append(_similarity)
+
+        _rank_ratio = np.asarray(_effective_ranks) / float(min(n_tokens, dim))
+        return {
+            "states": np.asarray(_states),
+            "rank_ratio": _rank_ratio,
+            "similarity": np.asarray(_similarities),
+            "final_rank_ratio": float(_rank_ratio[-1]),
+            "final_similarity": float(_similarities[-1]),
+        }
+
+    def plot_mixing_chamber_curves(mixing_chamber_result):
+        _layers = np.arange(len(mixing_chamber_result["rank_ratio"]))
+        _fig = go.Figure()
+        _fig.add_trace(
+            go.Scatter(
+                x=_layers,
+                y=mixing_chamber_result["rank_ratio"],
+                mode="lines+markers",
+                name="normalized effective rank",
+                line={"color": "#2563eb", "width": 3},
+                marker={"size": 5},
+                hovertemplate="layer=%{x}<br>rank=%{y:.3f}<extra></extra>",
+            )
+        )
+        _fig.add_trace(
+            go.Scatter(
+                x=_layers,
+                y=mixing_chamber_result["similarity"],
+                mode="lines+markers",
+                name="mean token similarity",
+                line={"color": "#16a34a", "width": 3},
+                marker={"size": 5},
+                hovertemplate="layer=%{x}<br>similarity=%{y:.3f}<extra></extra>",
+            )
+        )
+        _fig.add_hrect(
+            y0=0.80,
+            y1=1.05,
+            fillcolor="#fef3c7",
+            opacity=0.28,
+            line_width=0,
+            annotation_text="collapse zone",
+            annotation_position="top left",
+        )
+        _fig.update_layout(
+            title="Repeated mixing makes tokens less distinguishable",
+            height=390,
+            margin={"l": 54, "r": 20, "t": 58, "b": 54},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            hovermode="x unified",
+            legend={"orientation": "h", "y": -0.22},
+            xaxis={"title": "Layer"},
+            yaxis={
+                "title": "Score",
+                "range": [-0.05, 1.05],
+                "gridcolor": "#e5edf7",
+            },
+        )
+        return _fig
+
+    def token_identity_strip(mixing_chamber_result):
+        _states = mixing_chamber_result["states"]
+        _indices = [0, max(0, len(_states) // 2), len(_states) - 1]
+        _selected = _states[_indices]
+        _flat = _selected.reshape(-1, _selected.shape[-1])
+        _centered = _flat - _flat.mean(axis=0, keepdims=True)
+        _, _, _vh = np.linalg.svd(_centered, full_matrices=False)
+        _components = _vh[:3].T
+        if _components.shape[1] < 3:
+            _components = np.pad(_components, ((0, 0), (0, 3 - _components.shape[1])))
+        _projected = _centered @ _components[:, :3]
+        _mins = _projected.min(axis=0, keepdims=True)
+        _ranges = np.clip(_projected.max(axis=0, keepdims=True) - _mins, 1e-9, None)
+        _rgb = 45 + 180 * ((_projected - _mins) / _ranges)
+        _rgb = _rgb.reshape(_selected.shape[0], _selected.shape[1], 3).astype(int)
+
+        _rows = []
+        for _row_index, _layer_index in enumerate(_indices):
+            _beads = []
+            for _token_index, _color in enumerate(_rgb[_row_index]):
+                _border = "#16a34a" if _token_index == 0 else "#ffffff"
+                _beads.append(
+                    f"""
+                    <span class="mixing-bead"
+                          style="background: rgb({_color[0]}, {_color[1]}, {_color[2]});
+                                 border-color: {_border};">
+                      {_token_index}
+                    </span>
+                    """
+                )
+            _label = "initial layer" if _layer_index == 0 else f"layer {_layer_index}"
+            _rows.append(
+                f"""
+                <div class="mixing-row">
+                  <div class="mixing-row-label">{_label}</div>
+                  <div class="mixing-beads">{''.join(_beads)}</div>
+                </div>
+                """
+            )
+
+        return f"""
+        <style>
+          .mixing-chamber {{
+            border: 1px solid #d7dde8;
+            border-radius: 8px;
+            background: #fbfdff;
+            padding: 14px;
+          }}
+          .mixing-row {{
+            align-items: center;
+            display: grid;
+            grid-template-columns: 108px minmax(0, 1fr);
+            gap: 12px;
+            margin: 9px 0;
+          }}
+          .mixing-row-label {{
+            color: #475569;
+            font-size: 0.82rem;
+            font-weight: 800;
+          }}
+          .mixing-beads {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }}
+          .mixing-bead {{
+            align-items: center;
+            border: 3px solid #ffffff;
+            border-radius: 999px;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.14);
+            color: #0f172a;
+            display: inline-flex;
+            font-size: 0.75rem;
+            font-weight: 850;
+            height: 34px;
+            justify-content: center;
+            width: 34px;
+          }}
+        </style>
+        <div class="mixing-chamber">
+          <div style="color:#0f172a;font-weight:850;margin-bottom:8px;">
+            Token identity strip
+          </div>
+          <div style="color:#475569;font-size:0.9rem;line-height:1.45;margin-bottom:10px;">
+            Each bead color is computed from the simulated token vectors. When
+            the chamber over-mixes, the final row loses color diversity.
+          </div>
+          {''.join(_rows)}
+        </div>
+        """
+
+    return simulate_mixing_chamber, plot_mixing_chamber_curves, token_identity_strip
+
+
+@app.cell(hide_code=True)
+def _(
+    chamber_depth,
+    escape_valve,
+    go,
+    mo,
+    np,
+    plot_mixing_chamber_curves,
+    simulate_mixing_chamber,
+    token_identity_strip,
+):
+    if np is None or go is None:
+        mixing_chamber_output = mo.md(
+            "The mixing chamber needs NumPy and Plotly to render."
+        ).callout(kind="warn")
+    else:
+        _mixing_chamber_result = simulate_mixing_chamber(
+            depth=int(chamber_depth.value),
+            noop_fraction=float(escape_valve.value),
+        )
+        _final_rank = _mixing_chamber_result["final_rank_ratio"]
+        _final_similarity = _mixing_chamber_result["final_similarity"]
+        if _final_rank < 0.25 and _final_similarity > 0.80:
+            _verdict = "rank collapse"
+            _kind = "warn"
+        elif _final_similarity > 0.55:
+            _verdict = "over-mixing"
+            _kind = "info"
+        else:
+            _verdict = "identities preserved"
+            _kind = "success"
+        mixing_chamber_output = mo.vstack(
+            [
+                mo.hstack(
+                    [
+                        mo.Html(token_identity_strip(_mixing_chamber_result)),
+                        mo.md(
+                            f"""
+                            **Chamber readout**
+
+                            | Signal | Value |
+                            | --- | ---: |
+                            | Escape valve | {float(escape_valve.value):.2f} |
+                            | Simulated depth | {int(chamber_depth.value)} |
+                            | Final normalized effective rank | {_final_rank:.3f} |
+                            | Final mean token similarity | {_final_similarity:.3f} |
+                            | State | **{_verdict}** |
+
+                            Low escape-valve settings force tokens to keep mixing,
+                            so rank falls and pairwise similarity rises. Opening
+                            the valve slows the collapse by letting some layers
+                            behave closer to the paper's approximate no-op.
+                            """
+                        ).callout(kind=_kind),
+                    ],
+                    widths=[1.15, 0.85],
+                    gap=1,
+                ),
+                plot_mixing_chamber_curves(_mixing_chamber_result),
+            ],
+            gap=1,
+        )
+    mixing_chamber_output
+    return
+
+
+@app.cell(hide_code=True)
 def _(
     ANCHOR_MODES,
     EXECUTION_MODES,
@@ -625,7 +784,7 @@ def _(
 
     mo.vstack(
         [
-            mo.md("## 1. Choose the probe"),
+            mo.md("## 2. Choose the probe"),
             mo.hstack([execution_mode, model_choice], widths="equal", gap=1),
             mo.hstack([precision_choice, anchor_mode], widths="equal", gap=1),
             mo.hstack([prompt_preset, max_tokens, sink_threshold], widths="equal", gap=1),
@@ -957,7 +1116,7 @@ def _(mo, probe, sink_scores):
     if probe is None or sink_scores is None:
         head_picker_view = mo.md(
             """
-            ## 2. Pick a head to inspect
+            ## 3. Pick a head to inspect
 
             The layer/head controls appear after the attention probe finishes.
             The notebook will preselect the strongest first-token sink head so
@@ -994,7 +1153,7 @@ def _(mo, probe, sink_scores):
             [
                 mo.md(
                     f"""
-                    ## 2. Pick a head to inspect
+                    ## 3. Pick a head to inspect
 
                     Preselected **L{strongest_layer} H{strongest_head}** because
                     it has the highest first-token sink score in this run
@@ -1057,14 +1216,14 @@ def _(analysis_prompt, anchor_note, mo, probe_config):
     if probe_config is None:
         prompt_view = mo.md(
             """
-            ## 3. Current prompt
+            ## 4. Current prompt
 
             Waiting for a selected probe configuration.
             """
         ).callout(kind="info")
     else:
         prompt_view = mo.md(f"""
-        ## 3. Current prompt
+        ## 4. Current prompt
 
         Preset: `{probe_config.prompt_preset}`
 
@@ -1315,7 +1474,7 @@ def _(
 
         _sink_metric_output = mo.md(
             f"""
-            ## 4. Sink metric
+            ## 5. Sink metric
 
             The paper measures how many heads strongly attend to the first token.
             This notebook uses the same operational idea: a head is marked as a
@@ -1603,7 +1762,7 @@ def _(
     if probe is None:
         selected_attention_output = mo.md(
             """
-            ## 5. Inspect one attention head
+            ## 6. Inspect one attention head
 
             Run a probe to reveal the token-by-token attention heatmap.
             """
@@ -1627,7 +1786,7 @@ def _(
             [
                 mo.md(
                     f"""
-                    ## 5. Inspect one attention head
+                    ## 6. Inspect one attention head
 
                     Hover any cell to see which query token attended to which key token.
                     A bright green-yellow vertical band at key position 0 is the
@@ -1640,6 +1799,18 @@ def _(
         )
 
     selected_attention_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo, plot_next_token_distribution, probe):
+    if probe is None:
+        next_token_output = mo.md(
+            "Next-token distribution is waiting for a successful model probe."
+        ).callout(kind="info")
+    else:
+        next_token_output = plot_next_token_distribution(probe["next_tokens"])
+    mo.vstack([mo.md("## 7. Next-token distribution"), next_token_output])
     return
 
 
@@ -1673,7 +1844,7 @@ def _(mo, probe):
             [
                 mo.md(
                     """
-                    ## 6. Follow one token's routing
+                    ## 8. Follow one token's routing
 
                     Pick a query token and inspect which earlier tokens the
                     selected head attends to most strongly.
@@ -1713,7 +1884,7 @@ def _(mo, plot_sink_map, sink_scores, sink_threshold):
             [
                 mo.md(
                     """
-                    ## 7. Sink atlas
+                    ## 9. Sink atlas
 
                     Each tile is one layer/head pair. White rings mark heads
                     above the selected strong-sink threshold.
@@ -1731,7 +1902,7 @@ def _(mo, plot_sink_map, sink_scores, sink_threshold):
 @app.cell(hide_code=True)
 def _(mo, sink_table):
     strongest_sink_heads = sink_table.head(12) if sink_table is not None else None
-    mo.vstack([mo.md("## 8. Strongest sink heads"), strongest_sink_heads])
+    mo.vstack([mo.md("## 10. Strongest sink heads"), strongest_sink_heads])
     return
 
 
@@ -1750,7 +1921,7 @@ def _(mo):
         [
             mo.md(
                 """
-                ## 9. Why streaming systems care
+                ## 11. Why streaming systems care
 
                 A streaming decoder cannot keep every old key/value vector forever.
                 If a recent-only cache drops token 0, how much attention mass does
@@ -1848,14 +2019,14 @@ def _(mo, perturbed_prompt):
     if perturbed_prompt is None:
         perturb_prompt_view = mo.md(
             """
-            ## 10. Perturbation probe
+            ## 12. Perturbation probe
 
             Waiting for a successful attention probe.
             """
         ).callout(kind="info")
     else:
         perturb_prompt_view = mo.md(f"""
-        ## 10. Perturbation probe
+        ## 12. Perturbation probe
 
         The paper uses perturbation experiments to argue that sinks can reduce
         how strongly information spreads across token positions. This miniature
@@ -2024,7 +2195,7 @@ def _(
         [
             mo.md(
                 """
-                ## 11. Cloud GPU exploration
+                ## 13. Cloud GPU exploration
 
                 The single-model probe proves the mechanics. The molab path is
                 where we test the paper-shaped claim at a more serious scale:
@@ -2392,18 +2563,6 @@ def _(context_sweep_table, mo):
             gap=0.75,
         )
     _context_sweep_output
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo, plot_next_token_distribution, probe):
-    if probe is None:
-        next_token_output = mo.md(
-            "Next-token distribution is waiting for a successful model probe."
-        ).callout(kind="info")
-    else:
-        next_token_output = plot_next_token_distribution(probe["next_tokens"])
-    mo.vstack([mo.md("## 12. Next-token distribution"), next_token_output])
     return
 
 
