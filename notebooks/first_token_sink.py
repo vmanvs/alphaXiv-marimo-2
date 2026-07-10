@@ -69,6 +69,17 @@ def _(mo):
         padding: 16px 16px 14px;
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.10);
       }
+      .sink-hero svg g[stroke="#2563eb"] path {
+        animation: sink-path-arrival 1.35s ease-out 1 both;
+        stroke-dasharray: 120;
+        stroke-dashoffset: 120;
+      }
+      .sink-hero svg g[stroke="#2563eb"] path:nth-child(2) { animation-delay: 70ms; }
+      .sink-hero svg g[stroke="#2563eb"] path:nth-child(3) { animation-delay: 140ms; }
+      .sink-hero svg g[stroke="#2563eb"] path:nth-child(4) { animation-delay: 210ms; }
+      .sink-hero svg g[stroke="#2563eb"] path:nth-child(5) { animation-delay: 280ms; }
+      .sink-hero svg g[stroke="#2563eb"] path:nth-child(6) { animation-delay: 350ms; }
+      @keyframes sink-path-arrival { to { stroke-dashoffset: 0; } }
       @media (max-width: 760px) {
         .sink-hero__grid {
           grid-template-columns: 1fr;
@@ -77,6 +88,9 @@ def _(mo):
         .sink-hero h1 {
           font-size: 1.9rem;
         }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sink-hero svg g[stroke="#2563eb"] path { animation: none; stroke-dashoffset: 0; }
       }
     </style>
     <div class="sink-hero">
@@ -153,8 +167,8 @@ def _(mo):
 def _(mo):
     mo.md(r"""
     **Reader's note.** Read vertically with **show code** off. The notebook opens
-    as an explainer, then lets you reproduce the live probes on molab's RTX Pro
-    6000. Gemma and LLaMA runs require a Hugging Face read token; Qwen remains
+    as an explainer, then lets you reproduce the live probes on molab's
+    RTX Pro 6000 GPU. Gemma and LLaMA runs require a Hugging Face read token; Qwen remains
     an open control. If you want to tinker locally with small models and
     CPU-friendly defaults, use `notebooks/first_token_sink_local.py` from the
     GitHub repo.
@@ -223,9 +237,9 @@ def _():
 @app.cell(hide_code=True)
 def _(dependency_error, mo):
     if dependency_error is None:
-        mo.md("Dependencies loaded.").callout(kind="success")
+        dependency_status_output = None
     else:
-        mo.md(
+        dependency_status_output = mo.md(
             f"""
             Dependencies are not installed yet.
 
@@ -241,8 +255,67 @@ def _(dependency_error, mo):
             {dependency_error}
             ```
             """
-        ).callout(kind="warn")
+        ).callout(kind="danger")
+    dependency_status_output
     return
+
+
+@app.cell(hide_code=True)
+def _(mo, pd):
+    def format_result_table(
+        table,
+        *,
+        columns=None,
+        labels=None,
+        decimals=None,
+        page_size=10,
+        label="",
+        wrapped_columns=None,
+    ):
+        if table is None or pd is None:
+            return None
+        _display = table.copy()
+        if columns is not None:
+            _visible = [column for column in columns if column in _display.columns]
+            _display = _display.loc[:, _visible]
+        _condition_map = {
+            "plain prompt": "Plain prompt",
+            "with model first-token anchor": "First-token anchor",
+            "load failed": "Load failed",
+            "analysis failed": "Analysis failed",
+        }
+        if "condition" in _display.columns:
+            _display["condition"] = _display["condition"].replace(_condition_map)
+        if "architecture" in _display.columns:
+            _display["architecture"] = _display["architecture"].replace(
+                {"dense": "Dense", "moe": "MoE"}
+            )
+        for _column, _places in (decimals or {}).items():
+            if _column in _display.columns and pd.api.types.is_numeric_dtype(
+                _display[_column]
+            ):
+                _display[_column] = _display[_column].round(int(_places))
+        _labels = labels or {}
+        _display = _display.rename(columns=_labels)
+        _wrapped = [
+            _labels.get(column, column)
+            for column in (wrapped_columns or [])
+            if _labels.get(column, column) in _display.columns
+        ]
+        return mo.ui.table(
+            _display,
+            selection=None,
+            pagination=len(_display) > int(page_size),
+            page_size=int(page_size),
+            show_column_summaries=False,
+            show_data_types=False,
+            show_search=len(_display) > int(page_size),
+            show_download=True,
+            wrapped_columns=_wrapped,
+            label=label,
+        )
+
+    return (format_result_table,)
 
 
 @app.cell(hide_code=True)
@@ -291,11 +364,7 @@ def _(hf_token_form, mo, os):
         "source": hf_token_source,
         "available": hf_token is not None,
     }
-    mo.md(
-        f"""
-        Hugging Face auth: `{hf_token_source}`.
-        """
-    ).callout(kind="success" if hf_token is not None else "info")
+    mo.md(f"Hugging Face auth: `{hf_token_source}`.")
     return hf_token, hf_token_status
 
 
@@ -476,17 +545,17 @@ def _(mo):
     mo.md(r"""
     ### A decoder-only attention block in one minute
 
-    For query token (i), head (h) in layer (ell) assigns a causal
-    probability to every earlier key token (j le i):
+    For query token $i$, head $h$ in layer $\ell$ assigns a causal
+    probability to every earlier key token $j \leq i$:
 
-    [
-    alpha_{ij}^{(ell,h)} =
-    operatorname{softmax}_{j le i}
-    left(\frac{{q_i^{(ell,h)}}^{\top}k_j^{(ell,h)}}{\sqrt{d_h}}\right),
-    qquad
-    z_i^{(ell,h)} =
-    sum_{j le i}\alpha_{ij}^{(ell,h)}W_V^{(ell,h)}v_j^{(ell)}.
-    ]
+    $$
+    \alpha_{ij}^{(\ell,h)} =
+    \operatorname{softmax}_{j \leq i}
+    \left(\frac{{q_i^{(\ell,h)}}^{\top}k_j^{(\ell,h)}}{\sqrt{d_h}}\right),
+    \qquad
+    z_i^{(\ell,h)} =
+    \sum_{j \leq i}\alpha_{ij}^{(\ell,h)}W_V^{(\ell,h)}v_j^{(\ell)}.
+    $$
 
     The first equation produces the attention map; the second says why it is
     a **mixing operator**. Every output is a weighted combination of earlier
@@ -532,11 +601,11 @@ def _(mo):
         kind="success",
         full_width=True,
     )
-    _legacy_controls = mo.vstack(
+    mixing_chamber_controls = mo.vstack(
         [
             mo.md(
                 """
-                ## 1. Why depth needs an escape valve
+                ### NumPy verification: why depth needs an escape valve
 
                 Over-mixing, rank collapse, and representational collapse are
                 best read as a causal chain. Repeated attention mixing makes
@@ -557,17 +626,28 @@ def _(mo):
                 whether this setup will collapse token identities or keep them
                 distinguishable.
                 """
-            ).callout(kind="info"),
-            mo.hstack([collapse_guess, escape_valve, chamber_depth], widths="equal", gap=1),
+            ),
+            mo.hstack(
+                [collapse_guess, escape_valve, chamber_depth],
+                widths="equal",
+                wrap=True,
+                gap=1,
+            ),
             reveal_collapse_button,
         ],
         gap=1,
     )
-    return chamber_depth, collapse_guess, escape_valve, reveal_collapse_button
+    return (
+        chamber_depth,
+        collapse_guess,
+        escape_valve,
+        mixing_chamber_controls,
+        reveal_collapse_button,
+    )
 
 
 @app.cell(hide_code=True)
-def _(go, np):
+def _(apply_plot_theme, go, np):
     def simulate_mixing_chamber(
         n_tokens=8,
         dim=16,
@@ -663,8 +743,6 @@ def _(go, np):
             title="Repeated mixing makes tokens less distinguishable",
             height=390,
             margin={"l": 54, "r": 20, "t": 58, "b": 54},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             hovermode="x unified",
             legend={"orientation": "h", "y": -0.22},
             xaxis={"title": "Layer"},
@@ -674,7 +752,7 @@ def _(go, np):
                 "gridcolor": "#e5edf7",
             },
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     def token_identity_strip(mixing_chamber_result):
         _states = mixing_chamber_result["states"]
@@ -786,7 +864,7 @@ def _(
     if np is None or go is None:
         mixing_chamber_output = mo.md(
             "The mixing chamber needs NumPy and Plotly to render."
-        ).callout(kind="warn")
+        ).callout(kind="danger")
     elif not reveal_collapse_button.value:
         mixing_chamber_output = mo.md(
             """
@@ -848,14 +926,14 @@ def _(
                         ).callout(kind=_kind),
                     ],
                     widths=[1.15, 0.85],
+                    wrap=True,
                     gap=1,
                 ),
                 plot_mixing_chamber_curves(_mixing_chamber_result),
             ],
             gap=1,
         )
-    _legacy_mixing_chamber_output = mixing_chamber_output
-    return
+    return (mixing_chamber_output,)
 
 
 @app.cell(hide_code=True)
@@ -1483,53 +1561,78 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
+def _(mixing_chamber_controls, mixing_chamber_output, mo):
+    mo.vstack(
+        [
+            mo.md(
+                """
+                The challenge gives the intuition. Open the verification below
+                to measure the same over-mixing story with actual token vectors,
+                effective rank, and pairwise similarity.
+                """
+            ),
+            mo.accordion(
+                {
+                    "Verify the intuition with a NumPy simulation": mo.vstack(
+                        [mixing_chamber_controls, mixing_chamber_output],
+                        gap=1,
+                    )
+                }
+            ),
+        ],
+        gap=0.65,
+    )
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ### What the game is standing in for
 
-    Let (V^{(L)} \in \mathbb{R}^{T \times d}) collect all token
-    representations after (L) layers. A standard measure of **rank collapse**
-    asks whether every row of (V^{(L)}) is becoming close to the sequence
+    Let $V^{(L)} \in \mathbb{R}^{T \times d}$ collect all token
+    representations after $L$ layers. A standard measure of **rank collapse**
+    asks whether every row of $V^{(L)}$ is becoming close to the sequence
     average:
 
-    [
-    left\|V^{(L)} - \frac{1}{T}\mathbf{1}\mathbf{1}^{\top}V^{(L)}\right\|_F
+    $$
+    \left\|V^{(L)} - \frac{1}{T}\mathbf{1}\mathbf{1}^{\top}V^{(L)}\right\|_F
     < \Delta.
-    ]
+    $$
 
     The paper proves that this strong condition implies a related
     representational-collapse condition,
-    (left\|v_T^{(L)}-v_{T-1}^{(L)}\right\|_2 < \Delta), although the
+    $\left\|v_T^{(L)}-v_{T-1}^{(L)}\right\|_2 < \Delta$, although the
     converse need not hold. Depth and long context create different routes to
     the same practical danger: token states become harder to distinguish.
 
     To study how a local edit spreads, define the sensitivity
 
-    [
+    $$
     J_{i\rightarrow j}^{(L)} =
     \frac{\partial v_j^{(L)}}{\partial v_i^{(0)}}.
-    ]
+    $$
 
     In readable form, the paper's multi-head bound says this sensitivity is at
-    most a sum over all causal paths from (i) to (j), with each path weighted
+    most a sum over all causal paths from $i$ to $j$, with each path weighted
     by a product of attention coefficients across layers:
 
-    [
+    $$
     \left\|J_{i\rightarrow j}^{(L)}\right\|
     \le C_{\max}^{L}
     \sum_{\pi:i\rightsquigarrow j}
     \prod_{\ell=1}^{L}\bar{\alpha}_{\pi_\ell}^{(\ell)}.
-    ]
+    $$
 
     A sink removes weight from many content-to-content paths. Appendix B adds
     the crucial mechanical detail: the beginning token has an unusually
     low-norm value vector. If a head concentrates on it,
 
-    [
-    z_i^{(ell,h)} \approx W_V^{(ell,h)}v_{\mathrm{bos}}^{(ell)} \approx 0,
-    qquad
-    v_i^{(ell+1)} \approx v_i^{(ell)}
-    ]
+    $$
+    z_i^{(\ell,h)} \approx W_V^{(\ell,h)}v_{\mathrm{bos}}^{(\ell)} \approx 0,
+    \qquad
+    v_i^{(\ell+1)} \approx v_i^{(\ell)}
+    $$
 
     through the residual pathway. That is the paper's approximate no-op. The
     game models this mechanism; it does not claim that its scores are measured
@@ -1606,10 +1709,17 @@ def _(
                 broader RTX family and long-context sweeps come later, after the
                 sink behavior is visible in a single prompt.
                 """
-            ).callout(kind="info"),
+            ),
             model_choice,
-            mo.hstack([precision_choice, anchor_mode], widths="equal", gap=1),
-            mo.hstack([prompt_preset, max_tokens, sink_threshold], widths="equal", gap=1),
+            mo.hstack(
+                [precision_choice, anchor_mode], widths="equal", wrap=True, gap=1
+            ),
+            mo.hstack(
+                [prompt_preset, max_tokens, sink_threshold],
+                widths="equal",
+                wrap=True,
+                gap=1,
+            ),
             custom_prompt,
         ],
         gap=1,
@@ -1686,7 +1796,7 @@ def _(current_probe_config, mo, set_selected_probe_config):
                 Commit the setup before running it. This keeps the notebook from
                 downloading a model every time a dropdown changes.
                 """
-            ).callout(kind="info"),
+            ),
             select_probe_config,
         ],
         gap=0.6,
@@ -1703,8 +1813,8 @@ def _(hf_token, mo, probe_config):
     )
     if probe_config is None:
         probe_action_view = mo.md(
-            "Select a probe configuration above. No model will load until a configuration is selected and the run button is clicked."
-        ).callout(kind="info")
+            "_Select and commit a probe configuration. No model loads until the run button is clicked._"
+        )
     else:
         _requires_hf_token = probe_config.model_id.startswith(("google/", "meta-llama/"))
         _auth_note = (
@@ -1714,11 +1824,12 @@ def _(hf_token, mo, probe_config):
             if _requires_hf_token
             else "Hugging Face authentication: not required for this open control."
         )
+        _probe_ready = not _requires_hf_token or bool(hf_token)
         probe_action_view = mo.vstack(
             [
                 mo.md(
                     f"""
-                    Selected probe:
+                    **Experiment status — {'ready to run' if _probe_ready else 'action required'}**
 
                     - model: `{probe_config.model_id}`
                     - dtype policy: `{probe_config.precision_label}`
@@ -1727,7 +1838,7 @@ def _(hf_token, mo, probe_config):
                     - anchor mode: `{probe_config.anchor_mode}`
                     - {_auth_note}
                     """
-                ).callout(kind="info"),
+                ).callout(kind="success" if _probe_ready else "warn"),
                 run_probe_button,
             ],
             gap=0.6,
@@ -1897,6 +2008,7 @@ def _(
     PRECISION_OPTIONS,
     hf_token,
     load_model_bundle,
+    mo,
     model_choice,
     precision_choice,
     probe_config,
@@ -1912,11 +2024,15 @@ def _(
     )
     probe_run_requested = bool(probe_config is not None and run_probe_button.value)
     if probe_run_requested:
-        tokenizer, model, device, model_dtype, model_error = load_model_bundle(
-            selected_model_id,
-            selected_precision_key,
-            hf_token,
-        )
+        with mo.status.spinner(
+            title="Loading model",
+            subtitle=f"Preparing {selected_model_id} on the selected device.",
+        ):
+            tokenizer, model, device, model_dtype, model_error = load_model_bundle(
+                selected_model_id,
+                selected_precision_key,
+                hf_token,
+            )
     else:
         tokenizer = None
         model = None
@@ -1937,27 +2053,7 @@ def _(
 
 @app.cell(hide_code=True)
 def _(device, hf_token, mo, model, model_dtype, model_error, probe_config, probe_run_requested, selected_model_id, torch):
-    if probe_config is None:
-        model_status_output = mo.md(
-            """
-            Model status: waiting for a selected probe configuration.
-            """
-        ).callout(kind="info")
-    elif not probe_run_requested:
-        _requires_hf_token = selected_model_id.startswith(("google/", "meta-llama/"))
-        _auth_status = (
-            "Submit a Hugging Face read token above before running this paper-model probe."
-            if _requires_hf_token and not hf_token
-            else "Click **Load model and run attention probe** when you want this cell to download/load weights and compute attentions."
-        )
-        model_status_output = mo.md(
-            f"""
-            Model status: ready to run `{selected_model_id}`.
-
-            {_auth_status}
-            """
-        ).callout(kind="warn" if _requires_hf_token and not hf_token else "info")
-    elif model_error is not None:
+    if model_error is not None:
         model_status_output = mo.md(
             f"""
             Model could not be loaded.
@@ -1966,9 +2062,7 @@ def _(device, hf_token, mo, model, model_dtype, model_error, probe_config, probe
             {model_error}
             ```
             """
-        ).callout(kind="warn")
-    elif model is None:
-        model_status_output = mo.md("Model status: loading or waiting for the run button.").callout(kind="info")
+        ).callout(kind="danger")
     else:
         model_status_output = None
     model_status_output
@@ -1992,7 +2086,7 @@ def _(mo, probe, sink_scores, torch):
             The notebook will preselect the strongest first-token sink head so
             the first heatmap is immediately meaningful.
             """
-        ).callout(kind="info")
+        )
     else:
         _layer_count, _head_count = sink_scores.shape
         _finite_sink_mask = torch.isfinite(sink_scores)
@@ -2027,9 +2121,10 @@ def _(mo, probe, sink_scores, torch):
 
         head_picker_view = mo.vstack(
             [
+                mo.md("## 3. Attention anatomy"),
                 mo.md(
                     f"""
-            ### Select a head
+                    ### Select a head
 
                     Preselected **L{strongest_layer} H{strongest_head}** because
                     it has the highest finite first-token sink score in this run
@@ -2037,7 +2132,12 @@ def _(mo, probe, sink_scores, torch):
                     layer/head pair.
                     """
                 ).callout(kind="info"),
-                mo.hstack([layer_index_control, head_index_control], widths="equal", gap=1),
+                mo.hstack(
+                    [layer_index_control, head_index_control],
+                    widths="equal",
+                    wrap=True,
+                    gap=1,
+                ),
             ],
             gap=1,
         )
@@ -2097,7 +2197,7 @@ def _(analysis_prompt, anchor_note, mo, probe_config):
 
             Waiting for a selected probe configuration.
             """
-        ).callout(kind="info")
+        )
     else:
         prompt_view = mo.md(f"""
         ### Prompt under inspection
@@ -2324,6 +2424,7 @@ def _(
     device,
     model,
     model_error,
+    mo,
     probe_config,
     probe_run_requested,
     run_attention_probe,
@@ -2338,14 +2439,18 @@ def _(
         probe = None
     else:
         try:
-            probe = run_attention_probe(
-                analysis_prompt,
-                model,
-                tokenizer,
-                device,
-                torch,
-                probe_config.max_tokens,
-            )
+            with mo.status.spinner(
+                title="Running attention probe",
+                subtitle=f"Collecting attentions and hidden states for up to {probe_config.max_tokens} tokens.",
+            ):
+                probe = run_attention_probe(
+                    analysis_prompt,
+                    model,
+                    tokenizer,
+                    device,
+                    torch,
+                    probe_config.max_tokens,
+                )
             probe_error = None
         except Exception as exc:  # noqa: BLE001 - show probe failures in UI.
             probe = None
@@ -2356,7 +2461,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo, probe, probe_error, probe_run_requested):
     if probe_error is not None:
-        mo.md(
+        _probe_status_output = mo.md(
             f"""
             Probe failed.
 
@@ -2364,17 +2469,16 @@ def _(mo, probe, probe_error, probe_run_requested):
             {probe_error}
             ```
             """
-        ).callout(kind="warn")
+        ).callout(kind="danger")
     elif probe is not None:
-        mo.md(
+        _probe_status_output = mo.md(
             f"""
             Probe complete: `{len(probe["tokens"])}` tokens inspected.
             """
         ).callout(kind="success")
-    elif probe_run_requested:
-        mo.md("Probe is waiting for the model load to finish.").callout(kind="info")
     else:
-        mo.md("Probe output is waiting for the run button.").callout(kind="info")
+        _probe_status_output = None
+    _probe_status_output
     return
 
 
@@ -2414,25 +2518,25 @@ def _(mo):
     mo.md(r"""
     ### How this notebook measures a sink
 
-    For key position (p), layer (ell), and head (h), we average the
+    For key position $p$, layer $\ell$, and head $h$, we average the
     attention received over exactly the causal queries that had an opportunity
     to attend to that position:
 
-    [
+    $$
     s_{\ell,h}(p) =
     \frac{1}{T-p}
     \sum_{i=p}^{T-1}\alpha_{i,p}^{(\ell,h)}.
-    ]
+    $$
 
-    A head is counted as a token-0 sink when (s_{\ell,h}(0) > \varepsilon).
+    A head is counted as a token-0 sink when $s_{\ell,h}(0) > \varepsilon$.
     The whole-model rate is
 
-    [
+    $$
     R_{\varepsilon} =
     \frac{1}{LH}
     \sum_{\ell=1}^{L}\sum_{h=1}^{H}
     \mathbf{1}\!\left[s_{\ell,h}(0)>\varepsilon\right].
-    ]
+    $$
 
     This is the notebook's opportunity-normalized operationalization of the
     sink metric used in the paper and the Attention-Sink work. The threshold
@@ -2534,6 +2638,42 @@ def _(go, np):
         [1.0, YELLOW],
     ]
 
+    def apply_plot_theme(fig):
+        fig.update_layout(
+            template="plotly_white",
+            font={
+                "family": 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                "size": 13,
+                "color": "#253247",
+            },
+            title={
+                "x": 0.02,
+                "xanchor": "left",
+                "font": {"size": 18, "color": "#172033"},
+            },
+            hoverlabel={
+                "bgcolor": "#ffffff",
+                "bordercolor": "#cbd5e1",
+                "font": {"color": "#172033", "size": 12},
+            },
+            colorway=[BLUE, GREEN, YELLOW, SKY, "#8b5cf6", "#e45555"],
+        )
+        fig.update_xaxes(
+            gridcolor="#e7edf4",
+            linecolor="#cbd5e1",
+            zerolinecolor="#cbd5e1",
+            tickfont={"color": "#526174"},
+            title_font={"color": "#334155"},
+        )
+        fig.update_yaxes(
+            gridcolor="#e7edf4",
+            linecolor="#cbd5e1",
+            zerolinecolor="#cbd5e1",
+            tickfont={"color": "#526174"},
+            title_font={"color": "#334155"},
+        )
+        return fig
+
     def _sampled_token_ticks(tokens, max_ticks=28):
         if not tokens:
             return [], []
@@ -2542,60 +2682,93 @@ def _(go, np):
         labels = [f"{position}: {tokens[position][:14]}" for position in positions]
         return positions, labels
 
-    def plot_attention_matrix(matrix, tokens, layer, head):
-        data = np.nan_to_num(
+    def _sampled_indices(count, max_points, always_include=()):
+        if count <= max_points:
+            return list(range(count))
+        _sampled = np.linspace(0, count - 1, max_points, dtype=int).tolist()
+        return sorted(set(_sampled).union(int(value) for value in always_include))
+
+    def plot_attention_matrix(
+        matrix,
+        tokens,
+        layer,
+        head,
+        view_mode="Overview",
+        window_center=None,
+        window_size=64,
+    ):
+        _full_data = np.nan_to_num(
             np.asarray(matrix, dtype=float),
             nan=0.0,
             posinf=0.0,
             neginf=0.0,
         )
         token_count = len(tokens)
-        tick_positions, tick_labels = _sampled_token_ticks(tokens)
+        if view_mode == "Token window" and token_count > 0:
+            _center = token_count - 1 if window_center is None else int(window_center)
+            _center = max(0, min(token_count - 1, _center))
+            _size = max(8, min(int(window_size), token_count))
+            _start = max(0, min(token_count - _size, _center - _size // 2))
+            _query_indices = list(range(_start, _start + _size))
+            _key_indices = sorted(set([0] + _query_indices))
+            _view_label = f"token window {_query_indices[0]}–{_query_indices[-1]}"
+        elif token_count > 128:
+            _query_indices = _sampled_indices(token_count, 96, always_include=(token_count - 1,))
+            _key_indices = _sampled_indices(token_count, 96, always_include=(0, token_count - 1))
+            _view_label = f"overview · {len(_query_indices)}×{len(_key_indices)} sampled positions"
+        else:
+            _query_indices = list(range(token_count))
+            _key_indices = list(range(token_count))
+            _view_label = "full matrix"
+
+        data = _full_data[np.ix_(_query_indices, _key_indices)]
+        _x_tick_step = max(1, int(np.ceil(len(_key_indices) / 18)))
+        _y_tick_step = max(1, int(np.ceil(len(_query_indices) / 18)))
+        _x_ticks = _key_indices[::_x_tick_step]
+        _y_ticks = _query_indices[::_y_tick_step]
         hover = [
             [
                 (
                     f"query {row}: {tokens[row]}<br>"
                     f"key {col}: {tokens[col]}"
                 )
-                for col in range(token_count)
+                for col in _key_indices
             ]
-            for row in range(token_count)
+            for row in _query_indices
         ]
         fig = go.Figure(
             data=go.Heatmap(
                 z=data,
-                x=list(range(token_count)),
-                y=list(range(token_count)),
+                x=_key_indices,
+                y=_query_indices,
                 customdata=hover,
                 colorscale=SINK_COLORSCALE,
                 zmin=0.0,
-                zmax=max(0.05, float(np.nanmax(data))),
+                zmax=max(0.05, float(np.nanmax(_full_data))),
                 colorbar={"title": "attention", "thickness": 12},
                 hovertemplate="%{customdata}<br>attention=%{z:.4f}<extra></extra>",
             )
         )
         fig.update_layout(
-            title=f"Attention weights: layer {layer}, head {head}",
-            height=max(420, min(760, 20 * token_count)),
+            title=f"Attention weights: layer {layer}, head {head} · {_view_label}",
+            height=max(420, min(720, 8 * len(_query_indices))),
             margin={"l": 56, "r": 16, "t": 54, "b": 72},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={
                 "title": "Key token attended to",
                 "tickmode": "array",
-                "tickvals": tick_positions,
-                "ticktext": tick_labels,
+                "tickvals": _x_ticks,
+                "ticktext": [f"{position}: {tokens[position][:14]}" for position in _x_ticks],
                 "tickangle": -45,
             },
             yaxis={
                 "title": "Query token receiving context",
                 "tickmode": "array",
-                "tickvals": tick_positions,
-                "ticktext": tick_labels,
+                "tickvals": _y_ticks,
+                "ticktext": [f"{position}: {tokens[position][:14]}" for position in _y_ticks],
                 "autorange": "reversed",
             },
         )
-        return fig
+        return apply_plot_theme(fig)
 
     def build_sink_switch_counterfactual(matrix, tokens):
         _original = np.nan_to_num(
@@ -2704,8 +2877,6 @@ def _(go, np):
             title=f"Sink Switch lens: layer {layer}, head {head}",
             height=max(430, min(680, 18 * _token_count)),
             margin={"l": 54, "r": 18, "t": 74, "b": 86},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
         )
         _fig.update_xaxes(
             title="Key token",
@@ -2721,7 +2892,7 @@ def _(go, np):
             ticktext=_tick_labels,
             autorange="reversed",
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     def plot_sink_switch_gain(switch_result, tokens, top_k=10):
         _gain = np.nan_to_num(
@@ -2754,13 +2925,11 @@ def _(go, np):
             title="Where token-0 attention is forced to go",
             height=max(300, 30 * len(_labels)),
             margin={"l": 136, "r": 16, "t": 52, "b": 46},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={"title": "Mean gained attention"},
             yaxis={"title": ""},
             showlegend=False,
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     def plot_attention_flow(probe, layer, head, query_index, top_k=12):
         attention_row = np.nan_to_num(
@@ -2793,13 +2962,11 @@ def _(go, np):
             title=f"Where query token {query_index} sends attention",
             height=max(330, 32 * top_count),
             margin={"l": 126, "r": 16, "t": 52, "b": 48},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={"title": "Attention weight", "range": [0, max(0.05, float(values.max()) * 1.12)]},
             yaxis={"title": ""},
             showlegend=False,
         )
-        return fig
+        return apply_plot_theme(fig)
 
     def plot_sink_map(sink_scores, threshold):
         data = np.nan_to_num(
@@ -2850,12 +3017,10 @@ def _(go, np):
             title="Opportunity-normalized token-0 sink score by layer and head",
             height=max(360, min(760, 26 * layer_count)),
             margin={"l": 56, "r": 16, "t": 52, "b": 50},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={"title": "Head", "dtick": 1},
             yaxis={"title": "Layer", "dtick": 1, "autorange": "reversed"},
         )
-        return fig
+        return apply_plot_theme(fig)
 
     def plot_position_sink_profile(sink_summary, tokens):
         rates = np.nan_to_num(
@@ -2867,7 +3032,18 @@ def _(go, np):
         token_count = len(tokens)
         positions = np.arange(token_count)
         labels = [f"{position}: {tokens[position][:18]}" for position in positions]
-        colors = [YELLOW if position == 0 else BLUE for position in positions]
+        _runner = int(sink_summary.get("next_strongest_position", 0))
+        _runner = max(0, min(token_count - 1, _runner))
+        _lead = float(rates[0] - rates[_runner]) if token_count > 1 else 0.0
+        colors = [
+            YELLOW if position == 0 else BLUE if position == _runner else "#cbd5e1"
+            for position in positions
+        ]
+        _text = ["" for _ in positions]
+        if token_count > 0:
+            _text[0] = f"token 0<br>{rates[0]:.1f}%"
+        if token_count > 1 and _runner != 0:
+            _text[_runner] = f"runner-up<br>{rates[_runner]:.1f}%"
         hover = [
             f"position {position}<br>token: {tokens[position]}<br>sink rate: {rates[position]:.2f}%"
             for position in positions
@@ -2877,16 +3053,24 @@ def _(go, np):
                 x=positions,
                 y=rates,
                 marker={"color": colors},
+                text=_text,
+                textposition="outside",
+                cliponaxis=False,
                 customdata=hover,
                 hovertemplate="%{customdata}<extra></extra>",
             )
         )
         fig.update_layout(
-            title="Attention-sink rate by key position",
-            height=330,
-            margin={"l": 56, "r": 16, "t": 52, "b": 92},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
+            title=(
+                "Is position 0 exceptional?"
+                + (
+                    f"<br><sup>token 0 minus the strongest nonzero position: {_lead:+.1f} percentage points</sup>"
+                    if token_count > 1
+                    else ""
+                )
+            ),
+            height=360,
+            margin={"l": 56, "r": 16, "t": 76, "b": 92},
             xaxis={
                 "title": "Key position",
                 "tickmode": "array",
@@ -2894,10 +3078,10 @@ def _(go, np):
                 "ticktext": labels[:: max(1, int(np.ceil(token_count / 28)))],
                 "tickangle": -45,
             },
-            yaxis={"title": "Layer/head pairs above threshold (%)", "range": [0, 100]},
+            yaxis={"title": "Layer/head pairs above threshold (%)", "range": [0, 108]},
             showlegend=False,
         )
-        return fig
+        return apply_plot_theme(fig)
 
     def plot_hidden_delta(delta, tokens):
         data = np.nan_to_num(
@@ -2930,8 +3114,6 @@ def _(go, np):
             title="Hidden-state drift after perturbing the prompt",
             height=max(360, min(760, 24 * layer_count)),
             margin={"l": 56, "r": 16, "t": 52, "b": 72},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={
                 "title": "Token position",
                 "tickmode": "array",
@@ -2941,38 +3123,55 @@ def _(go, np):
             },
             yaxis={"title": "Layer, including embedding layer", "dtick": 1},
         )
-        return fig
+        return apply_plot_theme(fig)
 
-    def plot_streaming_cache_bars(streaming_cache_summary):
-        labels = ["recent-only cache", "token 0 + recent cache"]
-        values = np.nan_to_num(
-            [
+    def plot_streaming_cache_waterfall(streaming_cache_summary):
+        _recent = float(
+            np.nan_to_num(
                 streaming_cache_summary["recent_only_attention_mass"],
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+        )
+        _retained = float(
+            np.nan_to_num(
                 streaming_cache_summary["anchor_plus_recent_attention_mass"],
-            ],
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        ).tolist()
+                nan=0.0,
+                posinf=0.0,
+                neginf=0.0,
+            )
+        )
+        _recovered = max(0.0, _retained - _recent)
         fig = go.Figure(
-            data=go.Bar(
-                x=labels,
-                y=values,
-                marker={"color": [BLUE, GREEN]},
+            data=go.Waterfall(
+                x=["recent-only", "+ token 0", "retained mass"],
+                y=[_recent, _recovered, _retained],
+                measure=["absolute", "relative", "total"],
+                text=[f"{_recent:.3f}", f"+{_recovered:.3f}", f"{_retained:.3f}"],
+                textposition="outside",
+                connector={"line": {"color": "#94a3b8", "width": 1.5}},
+                increasing={"marker": {"color": GREEN}},
+                totals={"marker": {"color": BLUE}},
+                decreasing={"marker": {"color": "#e45555"}},
                 hovertemplate="%{x}<br>attention mass=%{y:.4f}<extra></extra>",
             )
         )
+        fig.add_hline(
+            y=1.0,
+            line={"color": "#94a3b8", "dash": "dot", "width": 1.5},
+            annotation_text="all attention mass = 1.0",
+            annotation_position="top left",
+        )
         fig.update_layout(
-            title="Attention mass preserved for the final token",
-            height=330,
-            margin={"l": 52, "r": 16, "t": 52, "b": 64},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
-            yaxis={"title": "Mean attention mass", "range": [0, max(1.0, max(values) * 1.12)]},
+            title="How much routing mass token 0 restores",
+            height=360,
+            margin={"l": 52, "r": 16, "t": 64, "b": 64},
+            yaxis={"title": "Mean retained attention mass", "range": [0, 1.12]},
             xaxis={"title": ""},
             showlegend=False,
         )
-        return fig
+        return apply_plot_theme(fig)
 
     def _dense_moe_valid_rows(table):
         if table is None or len(table) == 0:
@@ -3086,8 +3285,6 @@ def _(go, np):
             title="Anchor effect on token-0 sink rate",
             height=max(310, 120 + 92 * len(_plain_y)),
             margin={"l": 190, "r": 24, "t": 64, "b": 72},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={
                 "title": "Layer/head pairs above threshold (%)",
                 "range": [0, 100],
@@ -3097,7 +3294,7 @@ def _(go, np):
             legend={"orientation": "h", "y": -0.25},
             annotations=_annotations,
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     def plot_dense_moe_depth_profile(dense_moe_layer_table):
         _table = _dense_moe_valid_rows(dense_moe_layer_table)
@@ -3167,11 +3364,9 @@ def _(go, np):
             title="Where sink heads appear across depth",
             height=420,
             margin={"l": 62, "r": 18, "t": 78, "b": 92},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             legend={"orientation": "h", "y": -0.24},
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     def plot_dense_moe_attention_type(dense_moe_layer_table):
         _table = _dense_moe_valid_rows(dense_moe_layer_table)
@@ -3245,14 +3440,13 @@ def _(go, np):
             title="Sink rate by Gemma 4 attention layer type",
             height=max(330, 145 + 52 * len(_labels)),
             margin={"l": 120, "r": 24, "t": 62, "b": 58},
-            paper_bgcolor="#ffffff",
-            plot_bgcolor="#ffffff",
             xaxis={"title": "Attention layer type"},
             yaxis={"title": "", "autorange": "reversed"},
         )
-        return _fig
+        return apply_plot_theme(_fig)
 
     return (
+        apply_plot_theme,
         build_sink_switch_counterfactual,
         plot_attention_flow,
         plot_attention_matrix,
@@ -3264,12 +3458,68 @@ def _(go, np):
         plot_sink_switch_gain,
         plot_sink_switch_lens,
         plot_sink_map,
-        plot_streaming_cache_bars,
+        plot_streaming_cache_waterfall,
+    )
+
+
+@app.cell(hide_code=True)
+def _(mo, probe):
+    if probe is None:
+        attention_view_mode = None
+        attention_window_center = None
+        attention_window_size = None
+        attention_view_controls = None
+    else:
+        _token_count = len(probe["tokens"])
+        attention_view_mode = mo.ui.dropdown(
+            options=["Overview", "Token window"],
+            value="Overview",
+            label="Attention-map view",
+            full_width=True,
+        )
+        attention_window_center = mo.ui.slider(
+            start=0,
+            stop=max(1, _token_count - 1),
+            step=1,
+            value=max(0, _token_count - 1),
+            show_value=True,
+            label="Window center query token",
+            full_width=True,
+        )
+        attention_window_size = mo.ui.dropdown(
+            options=["32", "64", "96", "128"],
+            value="64",
+            label="Window size",
+            full_width=True,
+        )
+        attention_view_controls = mo.vstack(
+            [
+                mo.hstack(
+                    [attention_view_mode, attention_window_center, attention_window_size],
+                    widths="equal",
+                    wrap=True,
+                    gap=1,
+                ),
+                mo.md(
+                    "Overview mode downsamples long matrices before plotting. Token-window mode always retains key position 0 alongside the selected local range."
+                ),
+            ],
+            gap=0.5,
+        )
+    return (
+        attention_view_mode,
+        attention_window_center,
+        attention_window_size,
+        attention_view_controls,
     )
 
 
 @app.cell(hide_code=True)
 def _(
+    attention_view_controls,
+    attention_view_mode,
+    attention_window_center,
+    attention_window_size,
     mo,
     plot_attention_matrix,
     probe,
@@ -3280,11 +3530,11 @@ def _(
     if probe is None:
         selected_attention_output = mo.md(
             """
-            ### Inspect the strongest head
+            ### 3a. Inspect the strongest head
 
             Run a probe to reveal the token-by-token attention heatmap.
             """
-        ).callout(kind="info")
+        )
     else:
         _layer = min(int(selected_layer_index), probe["attention"].shape[0] - 1)
         _head = min(int(selected_head_index), probe["attention"].shape[1] - 1)
@@ -3299,18 +3549,22 @@ def _(
             probe["tokens"],
             _layer,
             _head,
+            view_mode=attention_view_mode.value,
+            window_center=int(attention_window_center.value),
+            window_size=int(attention_window_size.value),
         )
         selected_attention_output = mo.vstack(
             [
                 mo.md(
                     f"""
-                    ### Inspect the strongest head
+                    ### 3a. Inspect the strongest head
 
                     Hover any cell to see which query token attended to which key token.
                     A bright green-yellow vertical band at key position 0 is the
                     sink signature. {_score_line}
                     """
                 ),
+                attention_view_controls,
                 selected_attention_fig,
             ],
             gap=0.75,
@@ -3326,13 +3580,13 @@ def _(mo, probe):
         sink_switch_control = None
         _sink_switch_control_view = mo.md(
             """
-            ## 6b. The Sink Switch
+            ### 3b. The Sink Switch
 
             The Sink Switch appears after a successful attention probe. It is a
             truthful counterfactual lens over the selected head, not a modified
             model forward pass.
             """
-        ).callout(kind="info")
+        )
     else:
         sink_switch_control = mo.ui.checkbox(
             value=False,
@@ -3342,7 +3596,7 @@ def _(mo, probe):
             [
                 mo.md(
                     """
-                    ## 6b. The Sink Switch
+                    ### 3b. The Sink Switch
 
                     Flip the switch to ask a narrow counterfactual question:
                     **if this one head could not route attention to token 0,
@@ -3438,7 +3692,7 @@ def _(mo, probe):
         )
         query_token_view = mo.md(
             "The query-token selector appears after a successful probe."
-        ).callout(kind="info")
+        )
     else:
         _last_token = max(0, len(probe["tokens"]) - 1)
         query_token_index = mo.ui.slider(
@@ -3487,7 +3741,7 @@ def _(mo, plot_sink_map, sink_scores, sink_threshold):
     if sink_scores is None:
         sink_map_output = mo.md(
             "Sink atlas is waiting for a successful model probe."
-        ).callout(kind="info")
+        )
     else:
         sink_map_fig = plot_sink_map(sink_scores, float(sink_threshold.value))
         sink_map_output = mo.vstack(
@@ -3511,9 +3765,27 @@ def _(mo, plot_sink_map, sink_scores, sink_threshold):
 
 
 @app.cell(hide_code=True)
-def _(mo, sink_table):
+def _(format_result_table, mo, sink_table):
     strongest_sink_heads = sink_table.head(12) if sink_table is not None else None
-    mo.vstack([mo.md("### Highest-scoring sink heads"), strongest_sink_heads])
+    _strongest_view = format_result_table(
+        strongest_sink_heads,
+        columns=["layer", "head", "token0_sink_score", "strong_sink"],
+        labels={
+            "layer": "Layer",
+            "head": "Head",
+            "token0_sink_score": "Token-0 sink strength",
+            "strong_sink": "Above threshold",
+        },
+        decimals={"token0_sink_score": 3},
+        page_size=12,
+        label="Highest-scoring sink heads",
+    )
+    _strongest_output = (
+        mo.vstack([mo.md("### Highest-scoring sink heads"), _strongest_view])
+        if _strongest_view is not None
+        else None
+    )
+    _strongest_output
     return
 
 
@@ -3532,25 +3804,25 @@ def _(mo):
         [
             mo.md(
                 r"""
-                ### Practical implication: streaming caches
+                ### 3c. Practical implication: streaming caches
 
                 A streaming decoder cannot keep every old key/value vector forever.
                 If a recent-only cache drops token 0, how much attention mass does
                 the final token lose compared with a cache that keeps token 0 plus
                 recent tokens?
 
-                For the final query (T-1), the diagnostic reports
+                For the final query $T-1$, the diagnostic reports
 
-                [
+                $$
                 \Delta_{\mathrm{cache}} =
                 \frac{1}{LH}\sum_{\ell,h}
                 \left(
                 \sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
                 - \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
                 \right),
-                ]
+                $$
 
-                where (mathcal{R}) is the recent-token window. This measures
+                where $\mathcal{R}$ is the recent-token window. This measures
                 recovered routing mass, not perplexity or task accuracy; it is a
                 mechanism diagnostic motivated by streaming-attention results.
                 """
@@ -3564,9 +3836,10 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(
+    format_result_table,
     mo,
     pd,
-    plot_streaming_cache_bars,
+    plot_streaming_cache_waterfall,
     probe,
     streaming_cache_diagnostic,
     streaming_cache_window,
@@ -3574,7 +3847,7 @@ def _(
 ):
     if probe is None or pd is None:
         streaming_cache_table = None
-        _streaming_output = mo.md("Streaming diagnostic is waiting for a successful model probe.").callout(kind="info")
+        _streaming_output = mo.md("_Run the live probe to unlock the streaming-cache diagnostic._")
     else:
         streaming_cache_summary = streaming_cache_diagnostic(
             probe,
@@ -3582,11 +3855,35 @@ def _(
             torch,
         )
         streaming_cache_table = pd.DataFrame([streaming_cache_summary])
-        streaming_cache_fig = plot_streaming_cache_bars(streaming_cache_summary)
+        _streaming_table_view = format_result_table(
+            streaming_cache_table,
+            columns=[
+                "token_count",
+                "cache_window",
+                "recent_only_attention_mass",
+                "attention_mass_recovered_by_keeping_token_0",
+                "anchor_plus_recent_attention_mass",
+            ],
+            labels={
+                "token_count": "Tokens",
+                "cache_window": "Recent-token budget",
+                "recent_only_attention_mass": "Recent-only mass",
+                "attention_mass_recovered_by_keeping_token_0": "Recovered by token 0",
+                "anchor_plus_recent_attention_mass": "Retained mass",
+            },
+            decimals={
+                "recent_only_attention_mass": 3,
+                "attention_mass_recovered_by_keeping_token_0": 3,
+                "anchor_plus_recent_attention_mass": 3,
+            },
+            page_size=5,
+            label="Streaming-cache measurements",
+        )
+        streaming_cache_fig = plot_streaming_cache_waterfall(streaming_cache_summary)
         _streaming_output = mo.vstack(
             [
                 streaming_cache_fig,
-                streaming_cache_table,
+                _streaming_table_view,
                 mo.md(
                     """
                     Keeping token 0 is not a free lunch, but this diagnostic shows
@@ -3645,13 +3942,13 @@ def _(mo):
     mo.md(r"""
     ## 4. Does the sink limit perturbation spread?
 
-    Take an original prompt (x) and a controlled variant (x') that differs
-    by one lexical edit. At token (i) and layer (ell), the notebook measures
+    Take an original prompt $x$ and a controlled variant $x'$ that differs
+    by one lexical edit. At token $i$ and layer $\ell$, the notebook measures
 
-    [
-    D_i^{(ell)} =
-    \left\|v_i^{(ell)}(x)-v_i^{(ell)}(x')\right\|_2.
-    ]
+    $$
+    D_i^{(\ell)} =
+    \left\|v_i^{(\ell)}(x)-v_i^{(\ell)}(x')\right\|_2.
+    $$
 
     A bright cell in the heatmap means that the local edit substantially changed
     that token representation at that depth. The paper interprets this as an
@@ -3676,7 +3973,7 @@ def _(mo, perturbed_prompt):
 
             Waiting for a successful attention probe.
             """
-        ).callout(kind="info")
+        )
     else:
         perturb_prompt_view = mo.md(f"""
         ### Current perturbation
@@ -3721,7 +4018,7 @@ def _(hidden_delta, mo, perturb_error):
             {perturb_error}
             ```
             """
-        ).callout(kind="warn")
+        ).callout(kind="danger")
     elif hidden_delta is not None:
         first_layer_mean = float(hidden_delta[1].mean()) if hidden_delta.shape[0] > 1 else 0.0
         final_layer_mean = float(hidden_delta[-1].mean())
@@ -3840,6 +4137,7 @@ def _(
         comparison_model_view = mo.hstack(
             [comparison_model_a, comparison_model_b],
             widths="equal",
+            wrap=True,
             gap=1,
         )
     elif comparison_run_mode.value == "Run RTX family sweep":
@@ -3905,6 +4203,7 @@ def _(
             mo.hstack(
                 [comparison_run_mode, comparison_token_budget, comparison_prompt_set],
                 widths="equal",
+                wrap=True,
                 gap=1,
             ),
             comparison_model_view,
@@ -3932,6 +4231,7 @@ def _(
     anchored_prompt,
     build_long_context_prompt,
     hidden_drift_summary,
+    mo,
     perturb_prompt,
     run_attention_probe,
     summarize_attention_sink,
@@ -3980,7 +4280,14 @@ def _(
                 ]
 
             _comparison_rows = []
-            for _prompt_index, _base_prompt in enumerate(_base_prompts):
+            _prompt_progress = mo.status.progress_bar(
+                _base_prompts,
+                title=f"Benchmarking {model_id}",
+                subtitle="Running paired anchor and plain-prompt probes.",
+                completion_title=f"Finished {model_id}",
+                show_rate=False,
+            )
+            for _prompt_index, _base_prompt in enumerate(_prompt_progress):
                 for _condition, _anchor_name in [
                     ("with model first-token anchor", "Use model special token at first position"),
                     ("plain prompt", "Plain prompt only"),
@@ -4191,7 +4498,14 @@ def _(
                 _tokenizer,
             )
             _context_rows = []
-            for _budget in budgets:
+            _budget_progress = mo.status.progress_bar(
+                list(budgets),
+                title=f"Context sweep · {model_id}",
+                subtitle="Increasing the inference token budget.",
+                completion_title="Context sweep complete",
+                show_rate=False,
+            )
+            for _budget in _budget_progress:
                 try:
                     _probe = run_attention_probe(
                         _anchored_text,
@@ -4481,7 +4795,14 @@ def _(
         _metric_rows = []
         _layer_rows = []
 
-        for _model_spec in model_specs:
+        _model_progress = mo.status.progress_bar(
+            list(model_specs),
+            title="Dense-vs-MoE model sweep",
+            subtitle="Models are loaded one at a time and released after measurement.",
+            completion_title="Dense-vs-MoE model sweep complete",
+            show_rate=False,
+        )
+        for _model_spec in _model_progress:
             _tokenizer = None
             _model = None
             _device = None
@@ -4518,7 +4839,14 @@ def _(
                     )
                     continue
 
-                for _prompt_index, _base_prompt in enumerate(_base_prompts):
+                _prompt_progress = mo.status.progress_bar(
+                    _base_prompts,
+                    title=f"Prompt sweep · {_model_spec['label']}",
+                    subtitle="Evaluating plain and first-token-anchor conditions.",
+                    completion_title=f"Finished {_model_spec['label']}",
+                    show_rate=False,
+                )
+                for _prompt_index, _base_prompt in enumerate(_prompt_progress):
                     for _condition, _anchor_name in [
                         ("plain prompt", "Plain prompt only"),
                         ("with model first-token anchor", "Use model special token at first position"),
@@ -4680,6 +5008,7 @@ def _(
     hf_token,
     load_ephemeral_model_bundle,
     measure_anchor_effect,
+    mo,
     pd,
     probe_config,
     release_model_memory,
@@ -4715,7 +5044,14 @@ def _(
             if _model_id not in _comparison_model_ids:
                 _comparison_model_ids.append(_model_id)
 
-        for _model_id in _comparison_model_ids:
+        _model_progress = mo.status.progress_bar(
+            _comparison_model_ids,
+            title="Model-family sweep",
+            subtitle="Each model is loaded, measured, and released before the next one.",
+            completion_title="Model-family sweep complete",
+            show_rate=False,
+        )
+        for _model_id in _model_progress:
             _model_prompt_rows = measure_anchor_effect(
                 _model_id,
                 _sweep_prompts,
@@ -4739,17 +5075,52 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(comparison_table, mo):
+def _(comparison_table, format_result_table, mo):
     if comparison_table is None:
         _comparison_output = mo.md(
-            """
-            The cross-model benchmark is skipped by default because it can load
-            several large models. When run, it averages the sink metric across a
-            neutral mini-benchmark of document prefixes: LLaMA for direct
-            reproduction, Gemma for replication, and Qwen as an open control.
-            """
-        ).callout(kind="info")
+            "_Optional cloud benchmark not run. Start with a selected pair or the fixed RTX family sweep when GPU time is available._"
+        )
     else:
+        _comparison_view = format_result_table(
+            comparison_table,
+            columns=[
+                "model",
+                "condition",
+                "prompt_count",
+                "valid_prompt_count",
+                "tokens",
+                "sink_rate_percent",
+                "mean_sink_strength",
+                "last_token_attention_to_token_0",
+                "token0_position_rank",
+                "final_layer_drift",
+                "error",
+            ],
+            labels={
+                "model": "Model",
+                "condition": "Condition",
+                "prompt_count": "Prompts",
+                "valid_prompt_count": "Valid",
+                "tokens": "Mean tokens",
+                "sink_rate_percent": "Sink rate (%)",
+                "mean_sink_strength": "Mean sink strength",
+                "last_token_attention_to_token_0": "Final-query → token 0",
+                "token0_position_rank": "Token-0 rank",
+                "final_layer_drift": "Final-layer drift",
+                "error": "Errors",
+            },
+            decimals={
+                "tokens": 1,
+                "sink_rate_percent": 2,
+                "mean_sink_strength": 3,
+                "last_token_attention_to_token_0": 3,
+                "token0_position_rank": 1,
+                "final_layer_drift": 3,
+            },
+            wrapped_columns=["model", "error"],
+            page_size=10,
+            label="Cross-model evidence matrix",
+        )
         _comparison_output = mo.vstack(
             [
                 mo.md(
@@ -4761,7 +5132,7 @@ def _(comparison_table, mo):
                     document-style prompt prefixes.
                     """
                 ),
-                comparison_table,
+                _comparison_view,
             ],
             gap=1,
         )
@@ -4811,19 +5182,47 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(context_sweep_table, mo):
+def _(context_sweep_table, format_result_table, mo):
     if context_sweep_table is None:
         _context_sweep_output = mo.md(
-            """
-            The fixed-model inference-context sweep is waiting for a cloud GPU
-            run. It is intentionally a boundary test rather than a reproduction
-            of the paper's training-context experiment.
-            """
-        ).callout(kind="info")
+            "_Optional inference-context boundary test not run._"
+        )
     else:
+        _context_view = format_result_table(
+            context_sweep_table,
+            columns=[
+                "model",
+                "max_tokens",
+                "actual_tokens",
+                "sink_rate_percent",
+                "mean_sink_strength",
+                "last_token_attention_to_token_0",
+                "token0_position_rank",
+                "error",
+            ],
+            labels={
+                "model": "Model",
+                "max_tokens": "Token budget",
+                "actual_tokens": "Actual tokens",
+                "sink_rate_percent": "Sink rate (%)",
+                "mean_sink_strength": "Mean sink strength",
+                "last_token_attention_to_token_0": "Final-query → token 0",
+                "token0_position_rank": "Token-0 rank",
+                "error": "Error",
+            },
+            decimals={
+                "sink_rate_percent": 2,
+                "mean_sink_strength": 3,
+                "last_token_attention_to_token_0": 3,
+                "token0_position_rank": 1,
+            },
+            wrapped_columns=["model", "error"],
+            page_size=10,
+            label="Inference-context boundary test",
+        )
         _context_sweep_output = mo.vstack(
             [
-                context_sweep_table,
+                _context_view,
                 mo.md(
                     """
                     Read this as a distinction between training context and
@@ -4911,9 +5310,9 @@ def _(
                 condition, and sink threshold fixed. Because the models have
                 different depths, layers are compared at normalized position
 
-                [
+                $$
                 \tau_{\ell}=\frac{\ell}{L-1}\in[0,1],
-                ]
+                $$
 
                 and also grouped into early, middle, and late thirds. This is a
                 controlled architecture comparison, not a causal intervention on
@@ -4932,6 +5331,7 @@ def _(
             mo.hstack(
                 [dense_moe_prompt_set, dense_moe_token_budget],
                 widths="equal",
+                wrap=True,
                 gap=1,
             ),
             dense_moe_measure_drift,
@@ -5010,6 +5410,7 @@ def _(
 
 @app.cell(hide_code=True)
 def _(
+    format_result_table,
     gemma4_dense_moe_layer_table,
     gemma4_dense_moe_raw_table,
     gemma4_dense_moe_table,
@@ -5020,12 +5421,8 @@ def _(
 ):
     if gemma4_dense_moe_table is None:
         _dense_moe_output = mo.md(
-            """
-            The Gemma 4 dense-vs-MoE probe is waiting for a cloud GPU run. Use
-            the one-prompt default first; then rerun with four or eight neutral
-            document prompts if the first pass is stable.
-            """
-        ).callout(kind="info")
+            "_Optional Gemma 4 architecture extension not run. Begin with the one-prompt setting before expanding the benchmark._"
+        )
     else:
         _dense_moe_sink_fig = plot_dense_moe_sink_bars(gemma4_dense_moe_table)
         _dense_moe_depth_fig = plot_dense_moe_depth_profile(gemma4_dense_moe_layer_table)
@@ -5036,10 +5433,30 @@ def _(
                 gemma4_dense_moe_raw_table["error"].fillna("") != ""
             ]
             if len(_dense_moe_errors) > 0:
+                _dense_moe_error_view = format_result_table(
+                    _dense_moe_errors,
+                    columns=[
+                        "model_label",
+                        "architecture",
+                        "condition",
+                        "prompt_index",
+                        "error",
+                    ],
+                    labels={
+                        "model_label": "Model",
+                        "architecture": "Architecture",
+                        "condition": "Condition",
+                        "prompt_index": "Prompt",
+                        "error": "Error",
+                    },
+                    wrapped_columns=["model_label", "error"],
+                    page_size=10,
+                    label="Dense-vs-MoE error details",
+                )
                 _dense_moe_error_table = mo.vstack(
                     [
                         mo.md("Some prompt/model rows failed; successful rows are still summarized below.").callout(kind="warn"),
-                        _dense_moe_errors,
+                        _dense_moe_error_view,
                     ],
                     gap=0.75,
                 )
@@ -5096,11 +5513,134 @@ def _(
         if _dense_moe_error_table is not None:
             _dense_moe_views.append(_dense_moe_error_table)
 
-        _detail_sections = {"Summary metrics": gemma4_dense_moe_table}
+        _summary_table_view = format_result_table(
+            gemma4_dense_moe_table,
+            columns=[
+                "model_label",
+                "architecture",
+                "condition",
+                "prompt_count",
+                "valid_prompt_count",
+                "tokens",
+                "layer_count",
+                "head_count",
+                "sink_rate_percent",
+                "sink_rate_std",
+                "mean_sink_strength",
+                "last_token_attention_to_token_0",
+                "token0_position_rank",
+                "final_layer_drift",
+                "error",
+            ],
+            labels={
+                "model_label": "Model",
+                "architecture": "Architecture",
+                "condition": "Condition",
+                "prompt_count": "Prompts",
+                "valid_prompt_count": "Valid",
+                "tokens": "Mean tokens",
+                "layer_count": "Layers",
+                "head_count": "Heads",
+                "sink_rate_percent": "Sink rate (%)",
+                "sink_rate_std": "Prompt SD (pp)",
+                "mean_sink_strength": "Mean sink strength",
+                "last_token_attention_to_token_0": "Final-query → token 0",
+                "token0_position_rank": "Token-0 rank",
+                "final_layer_drift": "Final-layer drift",
+                "error": "Errors",
+            },
+            decimals={
+                "tokens": 1,
+                "layer_count": 0,
+                "head_count": 0,
+                "sink_rate_percent": 2,
+                "sink_rate_std": 2,
+                "mean_sink_strength": 3,
+                "last_token_attention_to_token_0": 3,
+                "token0_position_rank": 1,
+                "final_layer_drift": 3,
+            },
+            wrapped_columns=["model_label", "error"],
+            page_size=10,
+            label="Dense-vs-MoE summary metrics",
+        )
+        _detail_sections = {"Summary metrics": _summary_table_view}
         if gemma4_dense_moe_layer_table is not None and len(gemma4_dense_moe_layer_table) > 0:
-            _detail_sections["Layer and attention-type breakdown"] = gemma4_dense_moe_layer_table
+            _detail_sections["Layer and attention-type breakdown"] = format_result_table(
+                gemma4_dense_moe_layer_table,
+                columns=[
+                    "model_label",
+                    "architecture",
+                    "condition",
+                    "layer_group",
+                    "layer_count",
+                    "sink_rate_percent",
+                    "sink_rate_std",
+                    "mean_sink_strength",
+                    "valid_prompt_count",
+                    "error",
+                ],
+                labels={
+                    "model_label": "Model",
+                    "architecture": "Architecture",
+                    "condition": "Condition",
+                    "layer_group": "Layer group",
+                    "layer_count": "Layers",
+                    "sink_rate_percent": "Sink rate (%)",
+                    "sink_rate_std": "Prompt SD (pp)",
+                    "mean_sink_strength": "Mean sink strength",
+                    "valid_prompt_count": "Valid prompts",
+                    "error": "Errors",
+                },
+                decimals={
+                    "layer_count": 0,
+                    "sink_rate_percent": 2,
+                    "sink_rate_std": 2,
+                    "mean_sink_strength": 3,
+                },
+                wrapped_columns=["model_label", "error"],
+                page_size=12,
+                label="Layer and attention-type breakdown",
+            )
         if gemma4_dense_moe_raw_table is not None and len(gemma4_dense_moe_raw_table) > 0:
-            _detail_sections["Raw prompt-level rows"] = gemma4_dense_moe_raw_table
+            _detail_sections["Raw prompt-level rows"] = format_result_table(
+                gemma4_dense_moe_raw_table,
+                columns=[
+                    "model_label",
+                    "architecture",
+                    "condition",
+                    "prompt_index",
+                    "tokens",
+                    "sink_rate_percent",
+                    "mean_sink_strength",
+                    "last_token_attention_to_token_0",
+                    "token0_position_rank",
+                    "final_layer_drift",
+                    "error",
+                ],
+                labels={
+                    "model_label": "Model",
+                    "architecture": "Architecture",
+                    "condition": "Condition",
+                    "prompt_index": "Prompt",
+                    "tokens": "Tokens",
+                    "sink_rate_percent": "Sink rate (%)",
+                    "mean_sink_strength": "Mean sink strength",
+                    "last_token_attention_to_token_0": "Final-query → token 0",
+                    "token0_position_rank": "Token-0 rank",
+                    "final_layer_drift": "Final-layer drift",
+                    "error": "Error",
+                },
+                decimals={
+                    "sink_rate_percent": 2,
+                    "mean_sink_strength": 3,
+                    "last_token_attention_to_token_0": 3,
+                    "final_layer_drift": 3,
+                },
+                wrapped_columns=["model_label", "error"],
+                page_size=12,
+                label="Raw prompt-level rows",
+            )
         _dense_moe_views.append(mo.accordion(_detail_sections))
         _dense_moe_output = mo.vstack(_dense_moe_views, gap=1)
     _dense_moe_output
@@ -5109,27 +5649,106 @@ def _(
 
 @app.cell
 def _(mo):
-    mo.md("""
-    ## Takeaway
+    mo.vstack(
+        [
+            mo.md(
+                """
+                ## 7. Takeaway
 
-    A first-token sink is not necessarily wasted attention. In the paper's
-    account, it is a routing option that lets some heads mix less, helping deep
-    causal Transformers preserve distinguishable token representations.
-
-    This notebook separates that mechanism from three broader questions:
-
-    - Does the paper-shaped perturbation effect appear in a real LLaMA-family
-      model, and does it replicate in Gemma 2 9B?
-    - Does changing inference context tell the same story as changing training
-      context? Our boundary test treats that as an empirical question.
-    - Does sparse MoE routing alter the sink when the attention design is held
-      comparatively close? That is the extension this notebook contributes.
-
-    The practical lesson is to treat attention maps as possible control flow,
-    not only semantic lookup tables. When streaming or interpreting an LLM, a
-    token with little surface meaning may still be infrastructure the model uses
-    to regulate information flow.
-    """)
+                Treat attention maps as possible **control flow**, not only
+                semantic lookup. A token with little surface meaning can still
+                be infrastructure the model uses to regulate information flow.
+                """
+            ),
+            mo.Html(
+                """
+                <style>
+                  #sink-takeaway {
+                    background: linear-gradient(140deg, #f8fbff 0%, #ffffff 52%, #f2fbf6 100%);
+                    border: 1px solid #d8e2ee;
+                    border-radius: 12px;
+                    color: #172033;
+                    overflow: hidden;
+                  }
+                  #sink-takeaway .takeaway-grid {
+                    display: grid;
+                    gap: 0;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                  }
+                  #sink-takeaway article {
+                    border-right: 1px solid #dfe7f0;
+                    min-height: 190px;
+                    padding: 20px;
+                  }
+                  #sink-takeaway article:last-child { border-right: 0; }
+                  #sink-takeaway .takeaway-number {
+                    align-items: center;
+                    background: #e8f1ff;
+                    border-radius: 50%;
+                    color: #1d4ed8;
+                    display: inline-flex;
+                    font-size: 0.76rem;
+                    font-weight: 800;
+                    height: 28px;
+                    justify-content: center;
+                    margin-bottom: 11px;
+                    width: 28px;
+                  }
+                  #sink-takeaway h3 {
+                    color: #172033;
+                    font-size: 1rem;
+                    line-height: 1.3;
+                    margin: 0 0 8px;
+                  }
+                  #sink-takeaway p {
+                    color: #475569;
+                    font-size: 0.9rem;
+                    line-height: 1.52;
+                    margin: 0;
+                  }
+                  #sink-takeaway .takeaway-limit {
+                    background: #f8fafc;
+                    border-top: 1px solid #dfe7f0;
+                    color: #526174;
+                    font-size: 0.82rem;
+                    line-height: 1.5;
+                    padding: 13px 20px;
+                  }
+                  @media (max-width: 700px) {
+                    #sink-takeaway .takeaway-grid { grid-template-columns: 1fr; }
+                    #sink-takeaway article {
+                      border-bottom: 1px solid #dfe7f0;
+                      border-right: 0;
+                      min-height: 0;
+                    }
+                    #sink-takeaway article:last-child { border-bottom: 0; }
+                  }
+                </style>
+                <section id="sink-takeaway" aria-label="Notebook conclusions">
+                  <div class="takeaway-grid">
+                    <article>
+                      <span class="takeaway-number" aria-hidden="true">1</span>
+                      <h3>Paper claim</h3>
+                      <p>First-token sinks can give attention heads a low-information routing target, approximating a no-op and limiting destructive mixing through depth.</p>
+                    </article>
+                    <article>
+                      <span class="takeaway-number" aria-hidden="true">2</span>
+                      <h3>What we reproduce and replicate</h3>
+                      <p>LLaMA supplies the direct paper-family probe. Gemma 2 applies the same anchor and perturbation protocol as a replication-style transfer test.</p>
+                    </article>
+                    <article>
+                      <span class="takeaway-number" aria-hidden="true">3</span>
+                      <h3>What this notebook adds</h3>
+                      <p>The inference-context sweep separates a boundary condition from the paper's training result, while Gemma 4 asks whether sparse MoE routing changes the sink profile.</p>
+                    </article>
+                  </div>
+                  <div class="takeaway-limit"><strong>Limits.</strong> The inference-context sweep does not reproduce training-context experiments, and the Sink Switch visualizes attention redistribution without patching a model forward pass.</div>
+                </section>
+                """
+            ),
+        ],
+        gap=0.75,
+    )
     return
 
 
