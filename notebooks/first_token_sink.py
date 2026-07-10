@@ -3816,8 +3816,7 @@ $$
 \Delta_{\mathrm{cache}} =
 \frac{1}{LH}\sum_{\ell,h}
 \left(
-\sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
-- \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
+\sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)} - \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
 \right),
 $$
 
