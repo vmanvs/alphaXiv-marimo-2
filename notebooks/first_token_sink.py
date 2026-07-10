@@ -3812,14 +3812,14 @@ def _(mo):
 
                 For the final query $T-1$, the diagnostic reports
 
-                $$
-                \Delta_{\mathrm{cache}} =
-                \frac{1}{LH}\sum_{\ell,h}
-                \left(
-                \sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
-                - \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
-                \right),
-                $$
+$$
+\Delta_{\mathrm{cache}} =
+\frac{1}{LH}\sum_{\ell,h}
+\left(
+\sum_{j\in\{0\}\cup\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
+- \sum_{j\in\mathcal{R}}\alpha_{T-1,j}^{(\ell,h)}
+\right),
+$$
 
                 where $\mathcal{R}$ is the recent-token window. This measures
                 recovered routing mass, not perplexity or task accuracy; it is a
