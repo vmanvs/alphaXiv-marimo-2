@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = [
 #     "accelerate>=0.33",
-#     "marimo>=0.23",
+#     "marimo>=0.23.11",
 #     "matplotlib>=3.8",
 #     "numpy>=1.26",
 #     "pandas>=2.2",
