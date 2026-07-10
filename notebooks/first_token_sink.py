@@ -2601,128 +2601,281 @@ def _(go, np):
         )
         return fig
 
-    def plot_dense_moe_sink_bars(dense_moe_table):
-        if dense_moe_table is None or len(dense_moe_table) == 0:
+    def _dense_moe_valid_rows(table):
+        if table is None or len(table) == 0:
             return None
-        _table = dense_moe_table.copy()
-        if "error" in _table.columns:
+        _table = table.copy()
+        if "valid_prompt_count" in _table.columns:
+            _table = _table[_table["valid_prompt_count"].fillna(0) > 0]
+        elif "error" in _table.columns:
             _table = _table[_table["error"].fillna("") == ""]
         _table = _table.dropna(subset=["sink_rate_percent"])
-        if len(_table) == 0:
+        return _table if len(_table) > 0 else None
+
+    def plot_dense_moe_sink_bars(dense_moe_table):
+        _table = _dense_moe_valid_rows(dense_moe_table)
+        if _table is None:
             return None
 
-        _condition_order = [
-            "plain prompt",
-            "with model first-token anchor",
-        ]
+        _plain = "plain prompt"
+        _anchor = "with model first-token anchor"
         _model_order = list(dict.fromkeys(_table["model_label"].tolist()))
-        _fig = go.Figure()
-        for _condition, _color in zip(_condition_order, [BLUE, GREEN]):
-            _condition_rows = _table[_table["condition"] == _condition]
-            _values = []
-            _hover = []
-            for _model_label in _model_order:
-                _match = _condition_rows[_condition_rows["model_label"] == _model_label]
-                if len(_match) == 0:
-                    _values.append(None)
-                    _hover.append("")
-                    continue
-                _row = _match.iloc[0]
-                _values.append(float(_row["sink_rate_percent"]))
-                _hover.append(
-                    f"{_model_label}<br>{_condition}<br>"
-                    f"sink rate={float(_row['sink_rate_percent']):.2f}%<br>"
-                    f"mean sink score={float(_row['mean_sink_strength']):.3f}<br>"
-                    f"valid prompts={int(_row['valid_prompt_count'])}/{int(_row['prompt_count'])}"
-                )
-            _fig.add_trace(
-                go.Bar(
-                    name=_condition,
-                    x=_model_order,
-                    y=_values,
-                    marker={"color": _color},
-                    customdata=_hover,
-                    hovertemplate="%{customdata}<extra></extra>",
-                )
+        _line_x = []
+        _line_y = []
+        _plain_x, _plain_y, _plain_err, _plain_hover = [], [], [], []
+        _anchor_x, _anchor_y, _anchor_err, _anchor_hover = [], [], [], []
+        _annotations = []
+
+        for _model_label in _model_order:
+            _model_rows = _table[_table["model_label"] == _model_label]
+            _plain_rows = _model_rows[_model_rows["condition"] == _plain]
+            _anchor_rows = _model_rows[_model_rows["condition"] == _anchor]
+            if len(_plain_rows) == 0 or len(_anchor_rows) == 0:
+                continue
+            _plain_row = _plain_rows.iloc[0]
+            _anchor_row = _anchor_rows.iloc[0]
+            _plain_value = float(_plain_row["sink_rate_percent"])
+            _anchor_value = float(_anchor_row["sink_rate_percent"])
+            _plain_std = float(_plain_row.get("sink_rate_std", 0.0) or 0.0)
+            _anchor_std = float(_anchor_row.get("sink_rate_std", 0.0) or 0.0)
+            _line_x.extend([_plain_value, _anchor_value, None])
+            _line_y.extend([_model_label, _model_label, None])
+            _plain_x.append(_plain_value)
+            _plain_y.append(_model_label)
+            _plain_err.append(_plain_std)
+            _anchor_x.append(_anchor_value)
+            _anchor_y.append(_model_label)
+            _anchor_err.append(_anchor_std)
+            _plain_hover.append(
+                f"{_model_label}<br>plain prompt<br>sink rate={_plain_value:.2f}%<br>"
+                f"prompt std={_plain_std:.2f} pp<br>"
+                f"valid prompts={int(_plain_row['valid_prompt_count'])}/{int(_plain_row['prompt_count'])}"
             )
+            _anchor_hover.append(
+                f"{_model_label}<br>first-token anchor<br>sink rate={_anchor_value:.2f}%<br>"
+                f"prompt std={_anchor_std:.2f} pp<br>"
+                f"valid prompts={int(_anchor_row['valid_prompt_count'])}/{int(_anchor_row['prompt_count'])}"
+            )
+            _annotations.append(
+                {
+                    "x": (_plain_value + _anchor_value) / 2.0,
+                    "y": _model_label,
+                    "text": f"Δ {_anchor_value - _plain_value:+.1f} pp",
+                    "showarrow": False,
+                    "yshift": 18,
+                    "font": {"size": 11, "color": "#475569"},
+                }
+            )
+
+        if not _plain_x:
+            return None
+
+        _fig = go.Figure()
+        _fig.add_trace(
+            go.Scatter(
+                x=_line_x,
+                y=_line_y,
+                mode="lines",
+                line={"color": "#94a3b8", "width": 4},
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+        _fig.add_trace(
+            go.Scatter(
+                name="plain prompt",
+                x=_plain_x,
+                y=_plain_y,
+                mode="markers+text",
+                text=[f"{_value:.1f}%" for _value in _plain_x],
+                textposition="bottom center",
+                marker={"color": BLUE, "size": 13, "symbol": "circle"},
+                error_x={"type": "data", "array": _plain_err, "visible": True, "color": BLUE},
+                customdata=_plain_hover,
+                hovertemplate="%{customdata}<extra></extra>",
+            )
+        )
+        _fig.add_trace(
+            go.Scatter(
+                name="first-token anchor",
+                x=_anchor_x,
+                y=_anchor_y,
+                mode="markers+text",
+                text=[f"{_value:.1f}%" for _value in _anchor_x],
+                textposition="top center",
+                marker={"color": GREEN, "size": 13, "symbol": "diamond"},
+                error_x={"type": "data", "array": _anchor_err, "visible": True, "color": GREEN},
+                customdata=_anchor_hover,
+                hovertemplate="%{customdata}<extra></extra>",
+            )
+        )
         _fig.update_layout(
-            title="Dense vs MoE token-0 sink rate",
-            barmode="group",
-            height=380,
-            margin={"l": 56, "r": 16, "t": 56, "b": 72},
+            title="Anchor effect on token-0 sink rate",
+            height=max(310, 120 + 92 * len(_plain_y)),
+            margin={"l": 190, "r": 24, "t": 64, "b": 72},
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
-            yaxis={"title": "Layer/head pairs above threshold (%)", "range": [0, 100]},
-            xaxis={"title": ""},
-            legend={"orientation": "h", "y": -0.22},
+            xaxis={
+                "title": "Layer/head pairs above threshold (%)",
+                "range": [0, 100],
+                "gridcolor": "#e5e7eb",
+            },
+            yaxis={"title": "", "categoryorder": "array", "categoryarray": _model_order[::-1]},
+            legend={"orientation": "h", "y": -0.25},
+            annotations=_annotations,
         )
         return _fig
 
     def plot_dense_moe_depth_profile(dense_moe_layer_table):
-        if dense_moe_layer_table is None or len(dense_moe_layer_table) == 0:
+        _table = _dense_moe_valid_rows(dense_moe_layer_table)
+        if _table is None:
             return None
-        _table = dense_moe_layer_table.copy()
-        if "error" in _table.columns:
-            _table = _table[_table["error"].fillna("") == ""]
-        _table = _table.dropna(subset=["sink_rate_percent"])
         _depth_rows = _table[
             _table["layer_group"].isin(["early third", "middle third", "late third"])
         ].copy()
         if len(_depth_rows) == 0:
             return None
 
+        from plotly.subplots import make_subplots
+
         _bucket_order = ["early third", "middle third", "late third"]
-        _colors = [BLUE, GREEN, YELLOW, "#0f172a"]
-        _series_keys = list(
-            dict.fromkeys(
-                zip(
-                    _depth_rows["model_label"].tolist(),
-                    _depth_rows["condition"].tolist(),
+        _condition_order = ["plain prompt", "with model first-token anchor"]
+        _condition_titles = ["Plain prompt", "First-token anchor"]
+        _model_order = list(dict.fromkeys(_depth_rows["model_label"].tolist()))
+        _model_colors = {label: [BLUE, GREEN, YELLOW][index % 3] for index, label in enumerate(_model_order)}
+        _model_symbols = {label: ["circle", "diamond", "square"][index % 3] for index, label in enumerate(_model_order)}
+        _fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=_condition_titles)
+
+        for _column, _condition in enumerate(_condition_order, start=1):
+            for _model_label in _model_order:
+                _series = _depth_rows[
+                    (_depth_rows["model_label"] == _model_label)
+                    & (_depth_rows["condition"] == _condition)
+                ]
+                _values, _errors, _hover = [], [], []
+                for _bucket in _bucket_order:
+                    _match = _series[_series["layer_group"] == _bucket]
+                    if len(_match) == 0:
+                        _values.append(None)
+                        _errors.append(0.0)
+                        _hover.append("")
+                        continue
+                    _row = _match.iloc[0]
+                    _value = float(_row["sink_rate_percent"])
+                    _std = float(_row.get("sink_rate_std", 0.0) or 0.0)
+                    _values.append(_value)
+                    _errors.append(_std)
+                    _hover.append(
+                        f"{_model_label}<br>{_condition}<br>{_bucket}<br>"
+                        f"layers={int(_row['layer_count'])}<br>sink rate={_value:.2f}%<br>"
+                        f"prompt std={_std:.2f} pp<br>"
+                        f"valid prompts={int(_row['valid_prompt_count'])}/{int(_row['prompt_count'])}"
+                    )
+                _fig.add_trace(
+                    go.Scatter(
+                        name=_model_label,
+                        x=_bucket_order,
+                        y=_values,
+                        mode="lines+markers",
+                        line={"width": 3, "color": _model_colors[_model_label]},
+                        marker={"size": 9, "symbol": _model_symbols[_model_label]},
+                        error_y={"type": "data", "array": _errors, "visible": True},
+                        customdata=_hover,
+                        hovertemplate="%{customdata}<extra></extra>",
+                        showlegend=_column == 1,
+                    ),
+                    row=1,
+                    col=_column,
                 )
-            )
-        )
-        _fig = go.Figure()
-        for _index, (_model_label, _condition) in enumerate(_series_keys):
-            _series = _depth_rows[
-                (_depth_rows["model_label"] == _model_label)
-                & (_depth_rows["condition"] == _condition)
-            ]
-            _values = []
-            _hover = []
-            for _bucket in _bucket_order:
-                _match = _series[_series["layer_group"] == _bucket]
-                if len(_match) == 0:
-                    _values.append(None)
-                    _hover.append("")
-                    continue
-                _row = _match.iloc[0]
-                _values.append(float(_row["sink_rate_percent"]))
-                _hover.append(
-                    f"{_model_label}<br>{_condition}<br>{_bucket}<br>"
-                    f"layers={int(_row['layer_count'])}<br>"
-                    f"sink rate={float(_row['sink_rate_percent']):.2f}%"
-                )
-            _fig.add_trace(
-                go.Scatter(
-                    name=f"{_model_label} · {_condition.replace('with model first-token anchor', 'anchor')}",
-                    x=_bucket_order,
-                    y=_values,
-                    mode="lines+markers",
-                    line={"width": 3, "color": _colors[_index % len(_colors)]},
-                    marker={"size": 9},
-                    customdata=_hover,
-                    hovertemplate="%{customdata}<extra></extra>",
-                )
-            )
+        _fig.update_yaxes(title_text="Layer/head pairs above threshold (%)", range=[0, 100], row=1, col=1)
+        _fig.update_yaxes(range=[0, 100], row=1, col=2)
+        _fig.update_xaxes(title_text="Normalized depth bucket", categoryorder="array", categoryarray=_bucket_order)
         _fig.update_layout(
-            title="Where in depth the sink appears",
-            height=390,
-            margin={"l": 56, "r": 16, "t": 56, "b": 96},
+            title="Where sink heads appear across depth",
+            height=420,
+            margin={"l": 62, "r": 18, "t": 78, "b": 92},
             paper_bgcolor="#ffffff",
             plot_bgcolor="#ffffff",
-            yaxis={"title": "Layer/head pairs above threshold (%)", "range": [0, 100]},
-            xaxis={"title": "Normalized depth bucket"},
-            legend={"orientation": "h", "y": -0.28},
+            legend={"orientation": "h", "y": -0.24},
+        )
+        return _fig
+
+    def plot_dense_moe_attention_type(dense_moe_layer_table):
+        _table = _dense_moe_valid_rows(dense_moe_layer_table)
+        if _table is None:
+            return None
+        _type_order = ["local sliding-window attention", "global attention"]
+        _type_rows = _table[_table["layer_group"].isin(_type_order)].copy()
+        if len(_type_rows) == 0:
+            return None
+
+        _condition_order = ["plain prompt", "with model first-token anchor"]
+        _model_order = list(dict.fromkeys(_type_rows["model_label"].tolist()))
+        _row_keys = [
+            (_model_label, _condition)
+            for _model_label in _model_order
+            for _condition in _condition_order
+            if len(
+                _type_rows[
+                    (_type_rows["model_label"] == _model_label)
+                    & (_type_rows["condition"] == _condition)
+                ]
+            )
+            > 0
+        ]
+        _labels, _z, _text, _hover = [], [], [], []
+        for _model_label, _condition in _row_keys:
+            _short_model = "Dense" if "Dense" in _model_label else "MoE" if "MoE" in _model_label else _model_label
+            _short_condition = "anchor" if _condition != "plain prompt" else "plain"
+            _labels.append(f"{_short_model} · {_short_condition}")
+            _values, _texts, _hovers = [], [], []
+            for _layer_type in _type_order:
+                _match = _type_rows[
+                    (_type_rows["model_label"] == _model_label)
+                    & (_type_rows["condition"] == _condition)
+                    & (_type_rows["layer_group"] == _layer_type)
+                ]
+                if len(_match) == 0:
+                    _values.append(None)
+                    _texts.append("")
+                    _hovers.append("")
+                    continue
+                _row = _match.iloc[0]
+                _value = float(_row["sink_rate_percent"])
+                _values.append(_value)
+                _texts.append(f"{_value:.1f}%")
+                _hovers.append(
+                    f"{_model_label}<br>{_condition}<br>{_layer_type}<br>"
+                    f"layers={int(_row['layer_count'])}<br>sink rate={_value:.2f}%<br>"
+                    f"valid prompts={int(_row['valid_prompt_count'])}/{int(_row['prompt_count'])}"
+                )
+            _z.append(_values)
+            _text.append(_texts)
+            _hover.append(_hovers)
+
+        _fig = go.Figure(
+            data=go.Heatmap(
+                z=_z,
+                x=["Local sliding-window", "Global"],
+                y=_labels,
+                text=_text,
+                customdata=_hover,
+                texttemplate="%{text}",
+                colorscale=SINK_COLORSCALE,
+                zmin=0,
+                zmax=100,
+                colorbar={"title": "sink rate (%)", "thickness": 12},
+                hovertemplate="%{customdata}<extra></extra>",
+            )
+        )
+        _fig.update_layout(
+            title="Sink rate by Gemma 4 attention layer type",
+            height=max(330, 145 + 52 * len(_labels)),
+            margin={"l": 120, "r": 24, "t": 62, "b": 58},
+            paper_bgcolor="#ffffff",
+            plot_bgcolor="#ffffff",
+            xaxis={"title": "Attention layer type"},
+            yaxis={"title": "", "autorange": "reversed"},
         )
         return _fig
 
@@ -2730,6 +2883,7 @@ def _(go, np):
         build_sink_switch_counterfactual,
         plot_attention_flow,
         plot_attention_matrix,
+        plot_dense_moe_attention_type,
         plot_dense_moe_depth_profile,
         plot_dense_moe_sink_bars,
         plot_hidden_delta,
@@ -3847,6 +4001,9 @@ def _(
                         "global_layer_count": None,
                         "local_layer_count": None,
                         "sink_rate_percent": None,
+                        "sink_rate_std": None,
+                        "sink_rate_min": None,
+                        "sink_rate_max": None,
                         "mean_sink_strength": None,
                         "last_token_attention_to_token_0": None,
                         "token0_position_rank": None,
@@ -3855,6 +4012,7 @@ def _(
                     }
                 )
             else:
+                _sink_rates = _valid["sink_rate_percent"].dropna()
                 _row.update(
                     {
                         "tokens": float(_valid["tokens"].mean()),
@@ -3863,6 +4021,11 @@ def _(
                         "global_layer_count": float(_valid["global_layer_count"].mean()),
                         "local_layer_count": float(_valid["local_layer_count"].mean()),
                         "sink_rate_percent": float(_valid["sink_rate_percent"].mean()),
+                        "sink_rate_std": float(_sink_rates.std(ddof=0))
+                        if len(_sink_rates) > 1
+                        else 0.0,
+                        "sink_rate_min": float(_sink_rates.min()),
+                        "sink_rate_max": float(_sink_rates.max()),
                         "mean_sink_strength": float(_valid["mean_sink_strength"].mean()),
                         "last_token_attention_to_token_0": float(
                             _valid["last_token_attention_to_token_0"].mean()
@@ -3908,15 +4071,20 @@ def _(
                     {
                         "layer_count": None,
                         "sink_rate_percent": None,
+                        "sink_rate_std": None,
                         "mean_sink_strength": None,
                         "error": "; ".join(_errors),
                     }
                 )
             else:
+                _sink_rates = _valid["sink_rate_percent"].dropna()
                 _row.update(
                     {
                         "layer_count": float(_valid["layer_count"].mean()),
                         "sink_rate_percent": float(_valid["sink_rate_percent"].mean()),
+                        "sink_rate_std": float(_sink_rates.std(ddof=0))
+                        if len(_sink_rates) > 1
+                        else 0.0,
                         "mean_sink_strength": float(_valid["mean_sink_strength"].mean()),
                         "error": "; ".join(_errors),
                     }
@@ -4473,6 +4641,7 @@ def _(
     gemma4_dense_moe_raw_table,
     gemma4_dense_moe_table,
     mo,
+    plot_dense_moe_attention_type,
     plot_dense_moe_depth_profile,
     plot_dense_moe_sink_bars,
 ):
@@ -4487,6 +4656,7 @@ def _(
     else:
         _dense_moe_sink_fig = plot_dense_moe_sink_bars(gemma4_dense_moe_table)
         _dense_moe_depth_fig = plot_dense_moe_depth_profile(gemma4_dense_moe_layer_table)
+        _dense_moe_type_fig = plot_dense_moe_attention_type(gemma4_dense_moe_layer_table)
         _dense_moe_error_table = None
         if gemma4_dense_moe_raw_table is not None and "error" in gemma4_dense_moe_raw_table.columns:
             _dense_moe_errors = gemma4_dense_moe_raw_table[
@@ -4501,34 +4671,64 @@ def _(
                     gap=0.75,
                 )
 
-        _dense_moe_views = [
-            mo.md(
+        _valid_summary = gemma4_dense_moe_table.copy()
+        if "valid_prompt_count" in _valid_summary.columns:
+            _valid_summary = _valid_summary[
+                _valid_summary["valid_prompt_count"].fillna(0) > 0
+            ]
+
+        def _condition_value(_architecture, _condition):
+            _match = _valid_summary[
+                (_valid_summary["architecture"] == _architecture)
+                & (_valid_summary["condition"] == _condition)
+            ]
+            if len(_match) == 0 or _match["sink_rate_percent"].isna().all():
+                return None
+            return float(_match.iloc[0]["sink_rate_percent"])
+
+        _dense_plain = _condition_value("dense", "plain prompt")
+        _dense_anchor = _condition_value("dense", "with model first-token anchor")
+        _moe_plain = _condition_value("moe", "plain prompt")
+        _moe_anchor = _condition_value("moe", "with model first-token anchor")
+        if all(
+            _value is not None
+            for _value in [_dense_plain, _dense_anchor, _moe_plain, _moe_anchor]
+        ):
+            _result_summary = mo.md(
+                f"""
+                **Result at a glance.** Adding the first-token anchor changes the
+                sink rate by **{_dense_anchor - _dense_plain:+.1f} percentage
+                points** in the Dense model and **{_moe_anchor - _moe_plain:+.1f}
+                points** in the MoE model. The Dense–MoE gap is
+                **{abs(_dense_anchor - _moe_anchor):.1f} points** with the anchor
+                and **{abs(_dense_plain - _moe_plain):.1f} points** without it.
+
+                The headline rates answer whether the effect survives sparse
+                routing; the depth and layer-type plots show where any remaining
+                architectural difference lives.
                 """
-                Read this as an architecture test, not a leaderboard. The result
-                is informative in either direction: similarity supports an
-                attention/depth account, while a split profile suggests sparse
-                expert routing changes how the model uses its attention escape
-                valve.
-                """
-            ).callout(kind="success"),
-        ]
-        if _dense_moe_error_table is not None:
-            _dense_moe_views.append(_dense_moe_error_table)
+            ).callout(kind="info")
+        else:
+            _result_summary = mo.md(
+                "The comparison is partial. Plots include every aggregate with at least one valid prompt; inspect the error details before drawing a conclusion."
+            ).callout(kind="warn")
+
+        _dense_moe_views = [_result_summary]
         if _dense_moe_sink_fig is not None:
             _dense_moe_views.append(_dense_moe_sink_fig)
         if _dense_moe_depth_fig is not None:
             _dense_moe_views.append(_dense_moe_depth_fig)
-        _dense_moe_views.extend(
-            [
-                mo.md("### Dense-vs-MoE summary"),
-                gemma4_dense_moe_table,
-                mo.md("### Layer and depth breakdown"),
-                gemma4_dense_moe_layer_table
-                if gemma4_dense_moe_layer_table is not None
-                and len(gemma4_dense_moe_layer_table) > 0
-                else mo.md("Layer breakdown is unavailable because all layer-level rows failed.").callout(kind="warn"),
-            ]
-        )
+        if _dense_moe_type_fig is not None:
+            _dense_moe_views.append(_dense_moe_type_fig)
+        if _dense_moe_error_table is not None:
+            _dense_moe_views.append(_dense_moe_error_table)
+
+        _detail_sections = {"Summary metrics": gemma4_dense_moe_table}
+        if gemma4_dense_moe_layer_table is not None and len(gemma4_dense_moe_layer_table) > 0:
+            _detail_sections["Layer and attention-type breakdown"] = gemma4_dense_moe_layer_table
+        if gemma4_dense_moe_raw_table is not None and len(gemma4_dense_moe_raw_table) > 0:
+            _detail_sections["Raw prompt-level rows"] = gemma4_dense_moe_raw_table
+        _dense_moe_views.append(mo.accordion(_detail_sections))
         _dense_moe_output = mo.vstack(_dense_moe_views, gap=1)
     _dense_moe_output
     return
