@@ -309,7 +309,6 @@ def _(mo, pd):
             page_size=int(page_size),
             show_column_summaries=False,
             show_data_types=False,
-            show_search=len(_display) > int(page_size),
             show_download=True,
             wrapped_columns=_wrapped,
             label=label,
