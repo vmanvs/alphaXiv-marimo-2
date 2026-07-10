@@ -885,99 +885,298 @@ def _(mo):
             color: #172033;
             overflow: hidden;
           }
+          #circuit-breaker-challenge.cb-win-pulse {
+            animation: cb-win-pulse 760ms ease-out;
+          }
+          @keyframes cb-win-pulse {
+            0% { border-color: #d8e2ee; box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+            38% { border-color: #22a06b; box-shadow: 0 0 0 5px rgba(34,160,107,0.16); }
+            100% { border-color: #b7dfca; box-shadow: 0 0 0 0 rgba(34,160,107,0); }
+          }
+          .cb-challenge {
+            align-items: center;
+            background: #eef6ff;
+            border-bottom: 1px solid #cfe0f3;
+            display: grid;
+            gap: 11px;
+            grid-template-columns: 34px minmax(0, 1fr);
+            padding: 13px 18px;
+            transition: background-color 220ms ease, border-color 220ms ease;
+          }
+          .cb-challenge[data-state="safe"] {
+            background: #ecfdf3;
+            border-color: #b7dfca;
+          }
+          .cb-challenge__icon {
+            align-items: center;
+            background: #dbeafe;
+            border-radius: 50%;
+            color: #1d4ed8;
+            display: inline-flex;
+            font-size: 1.02rem;
+            font-weight: 850;
+            height: 32px;
+            justify-content: center;
+            transition: background-color 220ms ease, color 220ms ease, transform 220ms ease;
+            width: 32px;
+          }
+          .cb-challenge[data-state="safe"] .cb-challenge__icon {
+            background: #bbf7d0;
+            color: #15803d;
+            transform: scale(1.06);
+          }
+          .cb-challenge__kicker {
+            color: #64748b;
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 850;
+            letter-spacing: .06em;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+          }
+          .cb-challenge__message { color: #1e3a5f; font-size: 0.9rem; line-height: 1.4; }
+          .cb-challenge[data-state="safe"] .cb-challenge__message { color: #14532d; }
           .cb-top {
             align-items: start;
             display: grid;
             gap: 18px;
-            grid-template-columns: minmax(220px, 0.82fr) minmax(0, 1.18fr);
+            grid-template-columns: minmax(220px, 0.78fr) minmax(0, 1.22fr);
             padding: 18px 18px 12px;
           }
-          .cb-controls { display: grid; gap: 14px; }
-          .cb-field { display: grid; gap: 6px; }
+          .cb-controls { display: grid; gap: 16px; }
+          .cb-field { display: grid; gap: 7px; }
           .cb-field label { color: #334155; font-size: 0.86rem; font-weight: 750; }
           .cb-value { color: #0f766e; font-variant-numeric: tabular-nums; }
-          .cb-field input { accent-color: #0f766e; width: 100%; }
-          .cb-target {
-            background: #eff6ff;
-            border: 1px solid #bfdbfe;
-            border-radius: 8px;
-            color: #1e3a5f;
-            font-size: 0.88rem;
-            line-height: 1.45;
-            padding: 11px 12px;
+          .cb-range {
+            --fill: 0%;
+            appearance: none;
+            background: linear-gradient(to right, #0f766e 0 var(--fill), #dbe5ee var(--fill) 100%);
+            border-radius: 999px;
+            cursor: pointer;
+            height: 8px;
+            margin: 3px 0;
+            outline: none;
+            width: 100%;
           }
-          .cb-metrics { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-          .cb-metric { background: rgba(255,255,255,0.84); border: 1px solid #dce6f1; border-radius: 8px; padding: 11px; }
-          .cb-metric__label { color: #64748b; font-size: 0.72rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
-          .cb-metric__value { color: #0f172a; font-size: 1.25rem; font-weight: 850; margin-top: 5px; }
-          .cb-metric__note { color: #475569; font-size: 0.75rem; line-height: 1.3; margin-top: 3px; }
+          .cb-range::-webkit-slider-runnable-track { background: transparent; border: 0; height: 8px; }
+          .cb-range::-webkit-slider-thumb {
+            appearance: none;
+            background: #ffffff;
+            border: 3px solid #0f766e;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(15,118,110,0.24);
+            height: 20px;
+            margin-top: -6px;
+            width: 20px;
+          }
+          .cb-range::-moz-range-track { background: #dbe5ee; border: 0; border-radius: 999px; height: 8px; }
+          .cb-range::-moz-range-progress { background: #0f766e; border-radius: 999px; height: 8px; }
+          .cb-range::-moz-range-thumb {
+            background: #ffffff;
+            border: 3px solid #0f766e;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(15,118,110,0.24);
+            height: 16px;
+            width: 16px;
+          }
+          .cb-range:focus-visible { outline: 3px solid rgba(37,99,235,0.28); outline-offset: 4px; }
+          .cb-ticks {
+            color: #8190a3;
+            display: flex;
+            font-size: 0.66rem;
+            font-variant-numeric: tabular-nums;
+            justify-content: space-between;
+            line-height: 1;
+          }
+          .cb-metrics { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(146px, 1fr)); }
+          .cb-metric {
+            align-items: center;
+            background: rgba(255,255,255,0.88);
+            border: 1px solid #dce6f1;
+            border-radius: 9px;
+            display: grid;
+            gap: 8px;
+            grid-template-columns: minmax(0, 1fr) 54px;
+            min-height: 84px;
+            padding: 11px;
+            transition: border-color 200ms ease, box-shadow 200ms ease;
+          }
+          .cb-metric[data-health="good"] { border-color: #a7d8bb; }
+          .cb-metric[data-health="caution"] { border-color: #e9ca82; }
+          .cb-metric[data-health="bad"] { border-color: #efb0aa; }
+          .cb-metric__label { color: #64748b; font-size: 0.69rem; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; }
+          .cb-metric__note { color: #475569; font-size: 0.72rem; line-height: 1.3; margin-top: 4px; }
+          .cb-gauge { color: #64748b; height: 52px; position: relative; width: 52px; }
+          .cb-metric[data-health="good"] .cb-gauge { color: #15803d; }
+          .cb-metric[data-health="caution"] .cb-gauge { color: #b7791f; }
+          .cb-metric[data-health="bad"] .cb-gauge { color: #c2413b; }
+          .cb-gauge svg { display: block; height: 52px; overflow: visible; transform: rotate(-90deg); width: 52px; }
+          .cb-gauge__track { fill: none; stroke: #e7edf3; stroke-width: 5; }
+          .cb-gauge__progress {
+            fill: none;
+            stroke: currentColor;
+            stroke-dasharray: 100;
+            stroke-dashoffset: 100;
+            stroke-linecap: round;
+            stroke-width: 5;
+            transition: stroke-dashoffset 220ms ease, stroke 220ms ease;
+          }
+          .cb-metric__value {
+            color: currentColor;
+            font-size: 0.91rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 850;
+            left: 50%;
+            position: absolute;
+            top: 50%;
+            transform: translate(-50%, -50%);
+          }
           .cb-status {
-            border-top: 1px solid #dce6f1;
+            background: #f8fafc;
+            border-left: 4px solid #94a3b8;
             color: #334155;
-            font-size: 0.88rem;
+            font-size: 0.86rem;
             line-height: 1.45;
-            padding: 11px 18px;
+            margin: 0 18px 13px;
+            padding: 10px 12px;
+            transition: background-color 200ms ease, border-color 200ms ease;
           }
+          .cb-status[data-state="safe"] { background: #ecfdf3; border-color: #22a06b; }
+          .cb-status[data-state="sealed"] { background: #fff8e8; border-color: #d39a2c; }
+          .cb-status[data-state="mixing"] { background: #fff1f0; border-color: #e45555; }
           .cb-status strong { color: #0f172a; }
-          .cb-grid-wrap { overflow-x: auto; padding: 4px 18px 18px; }
-          .cb-grid { display: grid; gap: 5px; min-width: 610px; }
+          .cb-grid-wrap { overflow-x: auto; padding: 1px 18px 16px; }
+          .cb-grid-stage { min-width: 610px; position: relative; }
+          .cb-flow {
+            height: 100%;
+            left: 0;
+            overflow: visible;
+            pointer-events: none;
+            position: absolute;
+            top: 0;
+            width: 100%;
+            z-index: 3;
+          }
+          .cb-flow__signal, .cb-flow__noise {
+            fill: none;
+            stroke-linecap: round;
+            stroke-width: 2.2;
+            transition: opacity 220ms ease, stroke-width 220ms ease;
+          }
+          .cb-flow__signal { stroke: #158a5c; stroke-dasharray: 7 7; }
+          .cb-flow__noise { stroke: #dc4c4c; stroke-dasharray: 4 7; }
+          .cb-grid { display: grid; gap: 5px; min-width: 610px; position: relative; z-index: 2; }
           .cb-grid__head { align-items: center; color: #64748b; display: grid; font-size: 0.72rem; font-weight: 800; grid-template-columns: 116px repeat(7, minmax(48px, 1fr)); text-align: center; }
           .cb-grid__head span:first-child { text-align: left; }
           .cb-row { align-items: center; display: grid; gap: 5px; grid-template-columns: 116px repeat(7, minmax(48px, 1fr)); }
-          .cb-token { color: #334155; font-size: 0.78rem; font-weight: 750; line-height: 1.2; }
+          .cb-token { color: #334155; font-size: 0.77rem; font-weight: 750; line-height: 1.2; }
+          .cb-row--anchor .cb-token { color: #596579; }
           .cb-cell {
-            border: 1px solid rgba(148,163,184,0.36);
+            background: rgba(255,255,255,0.88);
+            border: 1px solid rgba(148,163,184,0.42);
             border-radius: 7px;
-            height: 37px;
+            height: 38px;
+            overflow: hidden;
             position: relative;
-            transition: background 220ms ease, transform 220ms ease;
           }
-          .cb-cell::after {
-            bottom: 4px;
-            color: rgba(15,23,42,0.78);
-            content: attr(data-mark);
-            font-size: 0.64rem;
-            font-weight: 850;
-            left: 0;
+          .cb-cell__signal, .cb-cell__noise {
+            inset: 0;
+            opacity: 0;
             position: absolute;
-            right: 0;
-            text-align: center;
+            transition: opacity 220ms ease;
+          }
+          .cb-cell__signal { background: #22a06b; }
+          .cb-cell__noise { background: #e45555; }
+          .cb-cell[data-mark="mixed"] .cb-cell__signal { clip-path: polygon(0 0, 0 100%, 100% 100%); }
+          .cb-cell[data-mark="mixed"] .cb-cell__noise { clip-path: polygon(0 0, 100% 0, 100% 100%); }
+          .cb-cell[data-mark="signal"] { box-shadow: inset 0 0 12px rgba(22,163,74,0.24); }
+          .cb-cell[data-mark="spill"] { box-shadow: inset 0 0 12px rgba(220,76,76,0.20); }
+          .cb-cell.is-anchor {
+            background: repeating-linear-gradient(135deg, #eef2f6 0 7px, #e5eaf0 7px 14px);
+            border: 1px dashed #8794a6;
+          }
+          .cb-cell.is-anchor::after {
+            color: #64748b;
+            content: "·";
+            font-size: 1.05rem;
+            left: 50%;
+            position: absolute;
+            top: 50%;
+            transform: translate(-50%, -56%);
           }
           .cb-legend { color: #64748b; display: flex; flex-wrap: wrap; font-size: 0.76rem; gap: 14px; padding: 0 18px 18px; }
           .cb-legend span { align-items: center; display: inline-flex; gap: 6px; }
           .cb-dot { border-radius: 50%; display: inline-block; height: 9px; width: 9px; }
           .cb-dot--signal { background: #22a06b; }
           .cb-dot--noise { background: #e45555; }
-          .cb-dot--anchor { background: #94a3b8; }
-          @media (max-width: 620px) {
+          .cb-dot--anchor { background: #94a3b8; border: 1px dashed #596579; }
+          @media (max-width: 700px) {
             .cb-top { grid-template-columns: 1fr; }
-            .cb-metric { padding: 8px; }
-            .cb-metric__value { font-size: 1.05rem; }
-            .cb-metric__note { font-size: 0.7rem; }
+          }
+          @media (max-width: 420px) {
+            .cb-challenge, .cb-top { padding-left: 13px; padding-right: 13px; }
+            .cb-status { margin-left: 13px; margin-right: 13px; }
+            .cb-grid-wrap { padding-left: 13px; padding-right: 13px; }
+            .cb-legend { padding-left: 13px; padding-right: 13px; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            #circuit-breaker-challenge *, #circuit-breaker-challenge *::before, #circuit-breaker-challenge *::after {
+              animation-duration: 0.01ms !important;
+              transition-duration: 0.01ms !important;
+            }
           }
         </style>
         <section aria-label="Circuit Breaker Challenge">
+          <div class="cb-challenge" data-role="challenge" data-state="active" aria-live="polite">
+            <div class="cb-challenge__icon" data-role="challenge-icon" aria-hidden="true">◎</div>
+            <div>
+              <span class="cb-challenge__kicker" data-role="challenge-kicker">Challenge</span>
+              <div class="cb-challenge__message" data-role="challenge-message">Find a setting where identity survives, the fact reaches the query, and perturbation spill stays contained.</div>
+            </div>
+          </div>
           <div class="cb-top">
             <div class="cb-controls">
               <div class="cb-field">
                 <label for="cb-sink">Heads routed to the anchor <span class="cb-value" data-role="sink-value"></span></label>
-                <input id="cb-sink" data-role="sink" type="range" min="0" max="100" step="5" value="35">
+                <input class="cb-range" id="cb-sink" data-role="sink" type="range" min="0" max="100" step="5" value="10">
+                <div class="cb-ticks" aria-hidden="true"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
               </div>
               <div class="cb-field">
                 <label for="cb-depth">Transformer depth <span class="cb-value" data-role="depth-value"></span></label>
-                <input id="cb-depth" data-role="depth" type="range" min="4" max="24" step="2" value="12">
+                <input class="cb-range" id="cb-depth" data-role="depth" type="range" min="4" max="24" step="2" value="18">
+                <div class="cb-ticks" aria-hidden="true"><span>4</span><span>8</span><span>12</span><span>16</span><span>20</span><span>24</span></div>
               </div>
-              <div class="cb-target">Keep the useful fact moving toward the final query, while containing the red perturbation. The best setting is neither all mixing nor all no-op routing.</div>
             </div>
-            <div class="cb-metrics" aria-live="polite">
-              <div class="cb-metric"><div class="cb-metric__label">Identity separation</div><div class="cb-metric__value" data-role="identity"></div><div class="cb-metric__note">higher resists collapse</div></div>
-              <div class="cb-metric"><div class="cb-metric__label">Fact at query</div><div class="cb-metric__value" data-role="fact"></div><div class="cb-metric__note">enough mixing is required</div></div>
-              <div class="cb-metric"><div class="cb-metric__label">Perturbation spill</div><div class="cb-metric__value" data-role="noise"></div><div class="cb-metric__note">lower is safer</div></div>
+            <div class="cb-metrics">
+              <div class="cb-metric" data-role="identity-card">
+                <div><div class="cb-metric__label">Identity separation</div><div class="cb-metric__note">higher resists collapse</div></div>
+                <div class="cb-gauge"><svg viewBox="0 0 48 48" aria-hidden="true"><circle class="cb-gauge__track" cx="24" cy="24" r="18"></circle><circle class="cb-gauge__progress" data-role="identity-ring" pathLength="100" cx="24" cy="24" r="18"></circle></svg><div class="cb-metric__value" data-role="identity"></div></div>
+              </div>
+              <div class="cb-metric" data-role="fact-card">
+                <div><div class="cb-metric__label">Fact at query</div><div class="cb-metric__note">enough mixing is required</div></div>
+                <div class="cb-gauge"><svg viewBox="0 0 48 48" aria-hidden="true"><circle class="cb-gauge__track" cx="24" cy="24" r="18"></circle><circle class="cb-gauge__progress" data-role="fact-ring" pathLength="100" cx="24" cy="24" r="18"></circle></svg><div class="cb-metric__value" data-role="fact"></div></div>
+              </div>
+              <div class="cb-metric" data-role="noise-card">
+                <div><div class="cb-metric__label">Perturbation spill</div><div class="cb-metric__note">lower is safer</div></div>
+                <div class="cb-gauge"><svg viewBox="0 0 48 48" aria-hidden="true"><circle class="cb-gauge__track" cx="24" cy="24" r="18"></circle><circle class="cb-gauge__progress" data-role="noise-ring" pathLength="100" cx="24" cy="24" r="18"></circle></svg><div class="cb-metric__value" data-role="noise"></div></div>
+              </div>
             </div>
           </div>
-          <div class="cb-status" data-role="status"></div>
+          <div class="cb-status" data-role="status" data-state="mixing" aria-live="polite"></div>
           <div class="cb-grid-wrap">
-            <div class="cb-grid" data-role="grid" role="img" aria-label="Token states sampled across Transformer depth"></div>
+            <div class="cb-grid-stage" data-role="grid-stage">
+              <svg class="cb-flow" data-role="flow" aria-hidden="true">
+                <defs>
+                  <marker id="cb-arrow-signal" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#158a5c"></path></marker>
+                  <marker id="cb-arrow-noise" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#dc4c4c"></path></marker>
+                </defs>
+                <path class="cb-flow__signal" data-role="signal-path" marker-end="url(#cb-arrow-signal)"></path>
+                <path class="cb-flow__noise" data-role="noise-path-a" marker-end="url(#cb-arrow-noise)"></path>
+                <path class="cb-flow__noise" data-role="noise-path-b" marker-end="url(#cb-arrow-noise)"></path>
+                <path class="cb-flow__noise" data-role="noise-path-query" marker-end="url(#cb-arrow-noise)"></path>
+              </svg>
+              <div class="cb-grid" data-role="grid" role="img" aria-label="Token states sampled across Transformer depth"></div>
+            </div>
           </div>
           <div class="cb-legend"><span><i class="cb-dot cb-dot--signal"></i>useful signal</span><span><i class="cb-dot cb-dot--noise"></i>perturbation</span><span><i class="cb-dot cb-dot--anchor"></i>low-information anchor</span></div>
         </section>
@@ -986,6 +1185,10 @@ def _(mo):
             const root = document.getElementById("circuit-breaker-challenge");
             if (!root) return;
             const els = {
+              challenge: root.querySelector('[data-role="challenge"]'),
+              challengeIcon: root.querySelector('[data-role="challenge-icon"]'),
+              challengeKicker: root.querySelector('[data-role="challenge-kicker"]'),
+              challengeMessage: root.querySelector('[data-role="challenge-message"]'),
               sink: root.querySelector('[data-role="sink"]'),
               depth: root.querySelector('[data-role="depth"]'),
               sinkValue: root.querySelector('[data-role="sink-value"]'),
@@ -993,9 +1196,24 @@ def _(mo):
               identity: root.querySelector('[data-role="identity"]'),
               fact: root.querySelector('[data-role="fact"]'),
               noise: root.querySelector('[data-role="noise"]'),
+              identityCard: root.querySelector('[data-role="identity-card"]'),
+              factCard: root.querySelector('[data-role="fact-card"]'),
+              noiseCard: root.querySelector('[data-role="noise-card"]'),
+              identityRing: root.querySelector('[data-role="identity-ring"]'),
+              factRing: root.querySelector('[data-role="fact-ring"]'),
+              noiseRing: root.querySelector('[data-role="noise-ring"]'),
               status: root.querySelector('[data-role="status"]'),
               grid: root.querySelector('[data-role="grid"]'),
+              gridStage: root.querySelector('[data-role="grid-stage"]'),
+              flow: root.querySelector('[data-role="flow"]'),
+              signalPath: root.querySelector('[data-role="signal-path"]'),
+              noisePaths: [
+                root.querySelector('[data-role="noise-path-a"]'),
+                root.querySelector('[data-role="noise-path-b"]'),
+                root.querySelector('[data-role="noise-path-query"]'),
+              ],
             };
+            const thresholds = { identity: 0.62, fact: 0.50, noise: 0.52 };
             const tokens = [
               { label: "⌂  anchor", kind: "anchor" },
               { label: "✓  useful fact", kind: "fact" },
@@ -1006,6 +1224,13 @@ def _(mo):
             ];
             const clamp = (value) => Math.max(0, Math.min(1, value));
             const pct = (value) => `${Math.round(value * 100)}%`;
+            const layerLabels = [];
+            const cellRefs = [];
+            let initialized = false;
+            let wasSafe = false;
+            let renderFrame = null;
+            let resizeFrame = null;
+
             function model() {
               const sink = Number(els.sink.value) / 100;
               const depth = Number(els.depth.value);
@@ -1015,8 +1240,8 @@ def _(mo):
               const rawFact = 1 - Math.exp(-0.31 * mix * depth);
               const noise = clamp(0.9 * pressure);
               const fact = clamp(rawFact * (1 - 0.54 * noise));
-              const safe = identity >= 0.62 && fact >= 0.5 && noise <= 0.52;
-              const sealed = fact < 0.5 && sink >= 0.6;
+              const safe = identity >= thresholds.identity && fact >= thresholds.fact && noise <= thresholds.noise;
+              const sealed = fact < thresholds.fact;
               return { sink, depth, mix, identity, fact, noise, safe, sealed };
             }
             function tokenState(kind, progress, values) {
@@ -1026,50 +1251,198 @@ def _(mo):
               if (kind === "query") return { signal: values.fact * Math.pow(progress, 1.45), noise: values.noise * Math.pow(progress, 1.18) };
               return { signal: 0.23 * values.fact * progress, noise: 0.64 * values.noise * progress };
             }
-            function cellColor(state) {
-              const green = Math.round(42 + 118 * state.signal);
-              const red = Math.round(44 + 178 * state.noise);
-              const blue = Math.round(72 + 96 * (1 - Math.max(state.signal, state.noise)));
-              const left = `rgba(34, ${green}, 107, ${0.16 + 0.66 * state.signal})`;
-              const right = `rgba(${red}, 72, ${blue}, ${0.12 + 0.64 * state.noise})`;
-              return `linear-gradient(135deg, ${left}, ${right})`;
-            }
             function mark(state) {
-              if (state.signal > state.noise && state.signal > 0.2) return "signal";
-              if (state.noise > state.signal && state.noise > 0.2) return "spill";
+              const signalVisible = state.signal > 0.16;
+              const noiseVisible = state.noise > 0.16;
+              if (signalVisible && noiseVisible) return "mixed";
+              if (signalVisible) return "signal";
+              if (noiseVisible) return "spill";
               return "quiet";
+            }
+            function health(metric, value) {
+              if (metric === "identity") return value >= thresholds.identity ? "good" : value >= 0.40 ? "caution" : "bad";
+              if (metric === "fact") return value >= thresholds.fact ? "good" : value >= 0.30 ? "caution" : "bad";
+              return value <= thresholds.noise ? "good" : value <= 0.75 ? "caution" : "bad";
+            }
+            function buildGrid() {
+              const head = document.createElement("div");
+              head.className = "cb-grid__head";
+              const headTitle = document.createElement("span");
+              headTitle.textContent = "token state";
+              head.appendChild(headTitle);
+              for (let index = 0; index < 7; index += 1) {
+                const label = document.createElement("span");
+                layerLabels.push(label);
+                head.appendChild(label);
+              }
+              els.grid.appendChild(head);
+
+              tokens.forEach((token) => {
+                const row = document.createElement("div");
+                row.className = `cb-row${token.kind === "anchor" ? " cb-row--anchor" : ""}`;
+                const tokenLabel = document.createElement("div");
+                tokenLabel.className = "cb-token";
+                tokenLabel.textContent = token.label;
+                row.appendChild(tokenLabel);
+                const rowCells = [];
+                for (let index = 0; index < 7; index += 1) {
+                  const cell = document.createElement("div");
+                  cell.className = `cb-cell${token.kind === "anchor" ? " is-anchor" : ""}`;
+                  cell.dataset.mark = token.kind === "anchor" ? "quiet" : "quiet";
+                  cell.setAttribute("role", "img");
+                  const signalLayer = document.createElement("span");
+                  signalLayer.className = "cb-cell__signal";
+                  const noiseLayer = document.createElement("span");
+                  noiseLayer.className = "cb-cell__noise";
+                  cell.append(signalLayer, noiseLayer);
+                  row.appendChild(cell);
+                  rowCells.push({ cell, signalLayer, noiseLayer });
+                }
+                els.grid.appendChild(row);
+                cellRefs.push(rowCells);
+              });
+            }
+            function updateRangeFill(input) {
+              const value = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
+              input.style.setProperty("--fill", `${value * 100}%`);
+            }
+            function updateMetric(metric, value, valueElement, ringElement, cardElement) {
+              valueElement.textContent = pct(value);
+              ringElement.style.strokeDashoffset = String(100 - value * 100);
+              cardElement.dataset.health = health(metric, value);
+              cardElement.setAttribute("aria-label", `${metric}: ${pct(value)}, ${health(metric, value)}`);
             }
             function renderGrid(values) {
               const marks = Array.from({ length: 7 }, (_, index) => Math.round(index * values.depth / 6));
-              const head = `<div class="cb-grid__head"><span>token state</span>${marks.map((layer) => `<span>L${layer}</span>`).join("")}</div>`;
-              const rows = tokens.map((token) => {
-                const cells = marks.map((layer) => {
+              layerLabels.forEach((label, index) => { label.textContent = `L${marks[index]}`; });
+              tokens.forEach((token, rowIndex) => {
+                marks.forEach((layer, columnIndex) => {
                   const state = tokenState(token.kind, layer / values.depth, values);
+                  const ref = cellRefs[rowIndex][columnIndex];
+                  const stateMark = token.kind === "anchor" ? "quiet" : mark(state);
+                  ref.cell.dataset.mark = stateMark;
+                  if (token.kind !== "anchor") {
+                    const signalOpacity = stateMark === "signal" || stateMark === "mixed" ? 0.18 + 0.76 * state.signal : 0;
+                    const noiseOpacity = stateMark === "spill" || stateMark === "mixed" ? 0.16 + 0.76 * state.noise : 0;
+                    ref.signalLayer.style.opacity = String(signalOpacity);
+                    ref.noiseLayer.style.opacity = String(noiseOpacity);
+                  }
                   const label = `${token.label}, layer ${layer}: useful signal ${pct(state.signal)}, perturbation ${pct(state.noise)}`;
-                  return `<div class="cb-cell" data-mark="${mark(state)}" style="background:${cellColor(state)}" aria-label="${label}" role="img"></div>`;
-                }).join("");
-                return `<div class="cb-row"><div class="cb-token">${token.label}</div>${cells}</div>`;
-              }).join("");
-              els.grid.innerHTML = head + rows;
+                  ref.cell.setAttribute("aria-label", label);
+                  ref.cell.title = label;
+                });
+              });
+            }
+            function pointFor(ref) {
+              const stageRect = els.gridStage.getBoundingClientRect();
+              const rect = ref.cell.getBoundingClientRect();
+              return {
+                x: rect.left - stageRect.left + rect.width / 2,
+                y: rect.top - stageRect.top + rect.height / 2,
+              };
+            }
+            function curve(start, end, bend = 0) {
+              const distance = Math.max(42, (end.x - start.x) * 0.42);
+              return `M ${start.x} ${start.y} C ${start.x + distance} ${start.y + bend}, ${end.x - distance} ${end.y - bend}, ${end.x} ${end.y}`;
+            }
+            function updateFlowGeometry(values) {
+              const width = els.gridStage.scrollWidth;
+              const height = els.gridStage.scrollHeight;
+              if (!width || !height || cellRefs.length !== tokens.length) return;
+              els.flow.setAttribute("viewBox", `0 0 ${width} ${height}`);
+              els.flow.setAttribute("width", String(width));
+              els.flow.setAttribute("height", String(height));
+              const factStart = pointFor(cellRefs[1][0]);
+              const perturbStart = pointFor(cellRefs[2][0]);
+              const distractorAEnd = pointFor(cellRefs[3][6]);
+              const distractorBEnd = pointFor(cellRefs[4][6]);
+              const queryEnd = pointFor(cellRefs[5][6]);
+              els.signalPath.setAttribute("d", curve(factStart, queryEnd, -10));
+              els.noisePaths[0].setAttribute("d", curve(perturbStart, distractorAEnd, 6));
+              els.noisePaths[1].setAttribute("d", curve(perturbStart, distractorBEnd, 12));
+              els.noisePaths[2].setAttribute("d", curve(perturbStart, queryEnd, 18));
+              els.signalPath.style.opacity = String(0.14 + 0.62 * values.fact);
+              els.signalPath.style.strokeWidth = String(1.6 + 1.6 * values.fact);
+              els.noisePaths.forEach((path, index) => {
+                const scale = index === 2 ? 1 : 0.78;
+                path.style.opacity = String((0.10 + 0.58 * values.noise) * scale);
+                path.style.strokeWidth = String(1.4 + 1.5 * values.noise * scale);
+              });
+            }
+            function syncFrameHeight() {
+              if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+              resizeFrame = requestAnimationFrame(() => {
+                resizeFrame = null;
+                const frame = window.frameElement;
+                if (!frame) return;
+                const height = Math.ceil(document.documentElement.scrollHeight);
+                const current = Number.parseFloat(frame.style.height || "0");
+                if (Math.abs(current - height) > 2) frame.style.height = `${height}px`;
+              });
+            }
+            function celebrate() {
+              root.classList.remove("cb-win-pulse");
+              void root.offsetWidth;
+              root.classList.add("cb-win-pulse");
             }
             function render() {
               const values = model();
               els.sinkValue.textContent = pct(values.sink);
               els.depthValue.textContent = `${values.depth} layers`;
-              els.identity.textContent = pct(values.identity);
-              els.fact.textContent = pct(values.fact);
-              els.noise.textContent = pct(values.noise);
+              updateRangeFill(els.sink);
+              updateRangeFill(els.depth);
+              updateMetric("identity", values.identity, els.identity, els.identityRing, els.identityCard);
+              updateMetric("fact", values.fact, els.fact, els.factRing, els.factCard);
+              updateMetric("noise", values.noise, els.noise, els.noiseRing, els.noiseCard);
               if (values.safe) {
+                els.challenge.dataset.state = "safe";
+                els.challengeIcon.textContent = "✓";
+                els.challengeKicker.textContent = "Balanced circuit";
+                els.challengeMessage.textContent = "You found a regime where identity survives, the fact arrives, and perturbation spill stays contained.";
+                els.status.dataset.state = "safe";
                 els.status.innerHTML = "<strong>Balanced circuit.</strong> Some heads can park attention at the anchor, reducing spill while leaving enough content routing for the fact to reach the query.";
               } else if (values.sealed) {
-                els.status.innerHTML = "<strong>Too many circuit breakers.</strong> The perturbation is contained, but so is the useful fact: the final query receives too little information.";
+                els.challenge.dataset.state = "active";
+                els.challengeIcon.textContent = "◎";
+                els.challengeKicker.textContent = "Challenge";
+                els.challengeMessage.textContent = "The fact is not reaching the query. Restore some content routing or add enough depth for it to travel.";
+                els.status.dataset.state = "sealed";
+                els.status.innerHTML = "<strong>Too little content routing.</strong> The perturbation is contained, but so is the useful fact: the final query receives too little information.";
               } else {
+                els.challenge.dataset.state = "active";
+                els.challengeIcon.textContent = "◎";
+                els.challengeKicker.textContent = "Challenge";
+                els.challengeMessage.textContent = "Identity or noise is outside the safe range. Route more heads to the anchor or reduce depth.";
+                els.status.dataset.state = "mixing";
                 els.status.innerHTML = "<strong>Over-mixing.</strong> Too much content routing lets the red perturbation spread through the sequence and erodes token identity.";
               }
               renderGrid(values);
+              updateFlowGeometry(values);
+              if (initialized && values.safe && !wasSafe) celebrate();
+              wasSafe = values.safe;
+              initialized = true;
+              syncFrameHeight();
             }
-            els.sink.addEventListener("input", render);
-            els.depth.addEventListener("input", render);
+            function scheduleRender() {
+              if (renderFrame !== null) return;
+              renderFrame = requestAnimationFrame(() => {
+                renderFrame = null;
+                render();
+              });
+            }
+            buildGrid();
+            els.sink.addEventListener("input", scheduleRender);
+            els.depth.addEventListener("input", scheduleRender);
+            root.addEventListener("animationend", () => root.classList.remove("cb-win-pulse"));
+            const observer = new ResizeObserver(() => {
+              updateFlowGeometry(model());
+              syncFrameHeight();
+            });
+            observer.observe(root);
+            window.addEventListener("resize", () => {
+              updateFlowGeometry(model());
+              syncFrameHeight();
+            });
             render();
           })();
         </script>
